@@ -202,6 +202,28 @@ h3 { margin-bottom: 12px; font-size: 1.1rem; }
 .tag-down { background: rgba(26,162,81,0.25); color: #6fdca0; }
 
 .loading { color: var(--muted); padding: 20px; }
+.loading small { font-size: 0.78rem; opacity: 0.8; }
+
+.error-box {
+  padding: 24px 20px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.error-box p { color: var(--muted); margin-bottom: 14px; font-size: 0.9rem; }
+.retry-btn {
+  padding: 9px 24px;
+  background: var(--up);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.retry-btn:hover { opacity: 0.9; }
+#refresh-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Modal */
 .modal {

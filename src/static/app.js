@@ -14,6 +14,30 @@ document.addEventListener("DOMContentLoaded", () => {
   const fmtPrice = (n) => Number(n).toLocaleString("zh-Hant", { minimumFractionDigits: 2 });
   const fmtPct = (n) => (n >= 0 ? "+" : "") + Number(n).toFixed(2) + "%";
   const dirClass = (n) => (n >= 0 ? "up" : "down");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 具備逾時與自動重試的 fetch — 用來撐過免費主機的冷啟動等待
+  async function fetchJSON(url, options = {}, hooks = {}) {
+    const attempts = hooks.attempts || 4;
+    const timeoutMs = hooks.timeoutMs || 20000;
+    let lastErr;
+    for (let i = 1; i <= attempts; i++) {
+      if (hooks.onAttempt) hooks.onAttempt(i, attempts);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { ...options, signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("伺服器回應 HTTP " + res.status);
+        return await res.json();
+      } catch (err) {
+        clearTimeout(timer);
+        lastErr = err;
+        if (i < attempts) await sleep(2000 * i);
+      }
+    }
+    throw lastErr;
+  }
 
   function actionClass(action) {
     if (action === "強烈買進") return "act-strong";
@@ -109,13 +133,31 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ---- 載入排行 -----------------------------------------------------------
+  function renderError(message) {
+    disclaimerEl.textContent = "⚠️ 本工具僅供教學研究，非投資建議。";
+    listEl.innerHTML = `
+      <div class="error-box">
+        <p>${message}</p>
+        <button id="retry-btn" class="retry-btn">重新載入</button>
+      </div>`;
+    document.getElementById("retry-btn").addEventListener("click", loadRecommendations);
+  }
+
   async function loadRecommendations() {
-    listEl.innerHTML = '<p class="loading">分析中…</p>';
     topPickEl.classList.add("hidden");
+    listEl.innerHTML =
+      '<p class="loading">分析中…<br><small>免費主機若處於休眠，首次喚醒約需 30–60 秒，請稍候</small></p>';
+    const onAttempt = (i, total) => {
+      if (i > 1) {
+        listEl.innerHTML = `<p class="loading">伺服器喚醒中，重試 ${i}/${total}…<br><small>請勿關閉頁面</small></p>`;
+      }
+    };
     try {
-      const res = await fetch(`/api/recommendations?strategy=${strategy}`);
-      if (!res.ok) throw new Error("API 回應失敗");
-      const data = await res.json();
+      const data = await fetchJSON(
+        `/api/recommendations?strategy=${strategy}`,
+        {},
+        { onAttempt }
+      );
 
       disclaimerEl.textContent = "⚠️ " + data.disclaimer;
       dataSourceEl.textContent = "資料來源：" + data.data_source;
@@ -138,7 +180,9 @@ document.addEventListener("DOMContentLoaded", () => {
         card.addEventListener("click", () => openDetail(card.dataset.code));
       });
     } catch (err) {
-      listEl.innerHTML = `<p class="loading">載入失敗：${err.message}</p>`;
+      renderError(
+        `資料載入失敗：${err.message}。免費主機可能仍在喚醒，請按下方按鈕重試。`
+      );
       console.error(err);
     }
   }
@@ -250,12 +294,21 @@ document.addEventListener("DOMContentLoaded", () => {
     modalBody.innerHTML = '<p class="loading">載入個股明細…</p>';
     modal.classList.remove("hidden");
     try {
-      const res = await fetch(`/api/stock/${code}`);
-      if (!res.ok) throw new Error("查無此個股");
-      const d = await res.json();
+      const d = await fetchJSON(
+        `/api/stock/${code}`,
+        {},
+        { attempts: 3, timeoutMs: 15000 }
+      );
       modalBody.innerHTML = modalHTML(d);
     } catch (err) {
-      modalBody.innerHTML = `<p class="loading">載入失敗：${err.message}</p>`;
+      modalBody.innerHTML = `
+        <div class="error-box">
+          <p>個股明細載入失敗：${err.message}</p>
+          <button id="detail-retry" class="retry-btn">重試</button>
+        </div>`;
+      document
+        .getElementById("detail-retry")
+        .addEventListener("click", () => openDetail(code));
     }
   }
 
@@ -274,8 +327,15 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("refresh-btn").addEventListener("click", async () => {
-    await fetch("/api/refresh", { method: "POST" });
-    loadRecommendations();
+    const btn = document.getElementById("refresh-btn");
+    btn.disabled = true;
+    try {
+      await fetchJSON("/api/refresh", { method: "POST" }, { attempts: 2, timeoutMs: 25000 });
+    } catch (e) {
+      console.warn("refresh 失敗，仍重新載入排行", e);
+    }
+    await loadRecommendations();
+    btn.disabled = false;
   });
 
   document.getElementById("modal-close").addEventListener("click", closeModal);
