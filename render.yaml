@@ -23,3 +23,7 @@ services:
       # demo＝內建示範資料（免網路）；改成 live 可改抓證交所即時資料
       - key: STOCK_DATA_MODE
         value: demo
+      # AI 多代理分析所需的 Claude 金鑰；sync:false 代表值要在 Render
+      # 服務的 Environment 分頁手動填入，不會寫進此檔（避免外洩）
+      - key: ANTHROPIC_API_KEY
+        sync: false

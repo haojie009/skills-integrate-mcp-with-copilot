@@ -15,6 +15,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const fmtPct = (n) => (n >= 0 ? "+" : "") + Number(n).toFixed(2) + "%";
   const dirClass = (n) => (n >= 0 ? "up" : "down");
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const esc = (s) =>
+    String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
   // 具備逾時與自動重試的 fetch — 用來撐過免費主機的冷啟動等待
   async function fetchJSON(url, options = {}, hooks = {}) {
@@ -242,6 +244,15 @@ document.addEventListener("DOMContentLoaded", () => {
       <div class="pi-val" style="margin-top:4px">收盤 ${fmtPrice(d.last_close)}
         <span class="chg ${dirClass(d.change_pct)}">${fmtPct(d.change_pct)}</span></div>
 
+      <div class="modal-section ai-section">
+        <h4>AI 多代理分析</h4>
+        <div id="ai-panel" data-code="${d.code}">
+          <p class="ai-intro">由 Claude 扮演「看多研究員 ／ 看空研究員 ／ 交易員 ／ 風控」四個角色，
+            綜合解讀本檔個股的技術面、基本面與消息面，給出短線操作判斷。</p>
+          <button id="ai-run-btn" class="retry-btn">啟動 AI 分析</button>
+        </div>
+      </div>
+
       <div class="modal-section">
         <h4>綜合評分</h4>
         <div class="kv-grid">
@@ -333,6 +344,8 @@ document.addEventListener("DOMContentLoaded", () => {
         { attempts: 3, timeoutMs: 15000 }
       );
       modalBody.innerHTML = modalHTML(d);
+      const aiBtn = document.getElementById("ai-run-btn");
+      if (aiBtn) aiBtn.addEventListener("click", () => runAIAnalysis(d.code));
     } catch (err) {
       modalBody.innerHTML = `
         <div class="error-box">
@@ -342,6 +355,53 @@ document.addEventListener("DOMContentLoaded", () => {
       document
         .getElementById("detail-retry")
         .addEventListener("click", () => openDetail(code));
+    }
+  }
+
+  // ---- AI 多代理分析 ------------------------------------------------------
+  function aiResultHTML(d) {
+    const a = d.analysis;
+    return `
+      <div class="ai-result">
+        <div class="badges" style="margin-bottom:10px">
+          <span class="action-badge ${actionClass(a.action)}">${a.action}</span>
+          <span class="score-pill">交易員信心 <b>${a.confidence}</b>%</span>
+          <span class="score-pill">風險等級 <b>${esc(a.risk_level)}</b></span>
+        </div>
+        <p class="ai-summary">${esc(a.summary)}</p>
+        <div class="ai-role bull"><h5>看多研究員</h5><p>${esc(a.bull_case)}</p></div>
+        <div class="ai-role bear"><h5>看空研究員</h5><p>${esc(a.bear_case)}</p></div>
+        <div class="ai-role"><h5>交易員綜合判斷</h5><p>${esc(a.trader_decision)}</p></div>
+        <div class="ai-role risk"><h5>風控提醒</h5><p>${esc(a.risk_notes)}</p></div>
+        <p class="ai-model">分析引擎：${esc(d.model)}　·　AI 產出僅供參考，非投資建議</p>
+      </div>`;
+  }
+
+  async function runAIAnalysis(code) {
+    const panel = document.getElementById("ai-panel");
+    if (!panel) return;
+    panel.innerHTML =
+      '<p class="loading">AI 多代理分析中…<br><small>Claude 正在進行多空辯論並評估風險，約需 15–45 秒</small></p>';
+    try {
+      const d = await fetchJSON(
+        `/api/ai-analysis/${code}`,
+        {},
+        { attempts: 1, timeoutMs: 120000 }
+      );
+      if (!d.available) {
+        panel.innerHTML = `<div class="ai-unavailable"><p>${esc(d.message)}</p></div>`;
+        return;
+      }
+      panel.innerHTML = aiResultHTML(d);
+    } catch (err) {
+      panel.innerHTML = `
+        <div class="ai-unavailable">
+          <p>AI 分析失敗：${esc(err.message)}</p>
+          <button id="ai-retry" class="retry-btn">重試</button>
+        </div>`;
+      document
+        .getElementById("ai-retry")
+        .addEventListener("click", () => runAIAnalysis(code));
     }
   }
 

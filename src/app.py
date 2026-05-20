@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
+import ai_advisor
 import analysis
 import data_provider
 
@@ -49,6 +50,7 @@ def _refresh():
     global _analyzed
     stocks = data_provider.load_stocks()
     _analyzed = [analysis.analyze_stock(s) for s in stocks]
+    ai_advisor.clear_cache()
     return _analyzed
 
 
@@ -78,7 +80,12 @@ def root():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "stocks": len(_analyzed), "data_source": data_provider.data_source_label()}
+    return {
+        "status": "ok",
+        "stocks": len(_analyzed),
+        "data_source": data_provider.data_source_label(),
+        "ai_enabled": ai_advisor.ai_enabled(),
+    }
 
 
 @app.get("/api/recommendations")
@@ -123,6 +130,15 @@ def stock_detail(code: str):
     for r in _analyzed:
         if r["code"] == code:
             return {"disclaimer": DISCLAIMER, "as_of": _as_of(), **r}
+    raise HTTPException(status_code=404, detail=f"查無代號 {code} 的個股")
+
+
+@app.get("/api/ai-analysis/{code}")
+def ai_analysis(code: str):
+    """對指定個股執行 Claude 多代理 AI 分析（需設定 ANTHROPIC_API_KEY）。"""
+    for r in _analyzed:
+        if r["code"] == code:
+            return {"disclaimer": DISCLAIMER, **ai_advisor.analyze(r)}
     raise HTTPException(status_code=404, detail=f"查無代號 {code} 的個股")
 
 

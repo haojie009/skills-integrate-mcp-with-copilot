@@ -20,6 +20,9 @@
 - **買賣計畫**：自動算出進場區間、停利價、停損價、風險報酬比、進出場時間
 - **選股排行**：依綜合評分排序，首選股以金色卡片突顯
 - **個股明細**：點任一卡片可看完整指標、訊號與新聞
+- **AI 多代理分析**：參考 [TradingAgents](https://github.com/TauricResearch/TradingAgents)
+  的多代理架構，由 Claude 扮演「看多研究員 ／ 看空研究員 ／ 交易員 ／ 風控」
+  四個角色，對個股做出短線交易判斷（需設定 `ANTHROPIC_API_KEY`，點開個股時即時執行）
 
 ## 技術棧
 
@@ -75,8 +78,23 @@ STOCK_DATA_MODE=live uvicorn app:app --app-dir src
 | ---- | ---- | ---- |
 | GET  | `/api/recommendations?strategy=day\|overnight` | 選股建議排行 |
 | GET  | `/api/stock/{code}` | 單一個股完整分析 |
+| GET  | `/api/ai-analysis/{code}` | Claude 多代理 AI 分析 |
 | GET  | `/api/health` | 服務健康檢查 |
 | POST | `/api/refresh` | 重新載入並分析資料 |
+
+## AI 多代理分析
+
+`/api/ai-analysis/{code}` 會把該個股已算好的技術／基本／消息面資料，
+交給 Claude（`claude-opus-4-7`）以 TradingAgents 風格的多代理流程推理：
+看多研究員找做多理由 → 看空研究員找風險 → 交易員下判斷 → 風控評估風險等級。
+
+啟用方式：設定環境變數 `ANTHROPIC_API_KEY`。
+
+- 本機：`export ANTHROPIC_API_KEY=sk-ant-...` 後再啟動服務
+- Render：到服務的 **Environment** 分頁新增 `ANTHROPIC_API_KEY`，存檔後自動重新部署
+
+未設定金鑰時，App 仍可正常運作，僅 AI 分析區塊會顯示「尚未設定金鑰」。
+AI 分析在點開個股時即時呼叫，每檔結果會快取以避免重複計費。
 
 ## 專案結構
 
@@ -85,6 +103,7 @@ src/
   app.py             FastAPI 入口與 API 路由
   analysis.py        技術指標、三面向評分、買賣計畫
   data_provider.py   demo／live 資料來源
+  ai_advisor.py      Claude 多代理 AI 分析層
   static/            前端頁面（index.html / app.js / styles.css）
 render.yaml          Render 一鍵部署設定
 requirements.txt     Python 相依套件

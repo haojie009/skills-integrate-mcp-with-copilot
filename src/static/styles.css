@@ -276,6 +276,42 @@ h3 { margin-bottom: 12px; font-size: 1.1rem; }
 }
 .plan-block h5 { font-size: 0.9rem; margin-bottom: 6px; color: var(--gold); }
 
+/* AI 多代理分析 */
+.ai-section {
+  background: linear-gradient(150deg, #1d2c40, #221b33);
+  border: 1px solid #4b3d6b;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.ai-section h4 { border-left-color: #b79bff; }
+.ai-intro { font-size: 0.84rem; color: var(--muted); margin-bottom: 10px; }
+.ai-summary {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--gold);
+  margin-bottom: 12px;
+}
+.ai-role {
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border-left: 3px solid var(--line);
+}
+.ai-role.bull { border-left-color: var(--up); }
+.ai-role.bear { border-left-color: var(--down); }
+.ai-role.risk { border-left-color: var(--gold); }
+.ai-role h5 { font-size: 0.86rem; margin-bottom: 4px; }
+.ai-role p { font-size: 0.86rem; color: #cdd8e4; }
+.ai-model { font-size: 0.74rem; color: var(--muted); margin-top: 12px; }
+.ai-unavailable {
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+}
+.ai-unavailable p { font-size: 0.85rem; color: var(--muted); margin-bottom: 10px; }
+
 .hidden { display: none; }
 
 footer {

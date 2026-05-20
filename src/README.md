@@ -9,6 +9,7 @@ FastAPI 應用程式：以技術面、基本面、消息面綜合評分，提供
 | `app.py` | FastAPI 入口與 API 路由 |
 | `analysis.py` | 技術指標、三面向評分、買賣計畫產生 |
 | `data_provider.py` | 資料來源層（demo 模擬資料／live 證交所 API） |
+| `ai_advisor.py` | Claude 多代理 AI 分析層（需 `ANTHROPIC_API_KEY`） |
 | `static/` | 前端單頁應用（`index.html`／`app.js`／`styles.css`） |
 
 ## 執行
@@ -29,6 +30,7 @@ uvicorn app:app --app-dir src --reload
 | ---- | ---- | ---- |
 | GET  | `/api/recommendations?strategy=day\|overnight` | 選股建議排行 |
 | GET  | `/api/stock/{code}` | 單一個股完整分析 |
+| GET  | `/api/ai-analysis/{code}` | Claude 多代理 AI 分析 |
 | GET  | `/api/health` | 健康檢查 |
 | POST | `/api/refresh` | 重新載入並分析資料 |
 
