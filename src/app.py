@@ -22,16 +22,24 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 
 import ai_advisor
 import analysis
 import data_provider
 
+
+class UTF8JSONResponse(JSONResponse):
+    """明確標註 charset=utf-8，避免直接以瀏覽器開啟 API 時中文亂碼。"""
+
+    media_type = "application/json; charset=utf-8"
+
+
 app = FastAPI(
     title="台股當沖／隔日沖選股助手",
     description="以技術面、基本面、消息面綜合評分，提供當沖與隔日沖參考訊號（非投資建議）",
     version="1.0.0",
+    default_response_class=UTF8JSONResponse,
 )
 
 current_dir = Path(__file__).parent
