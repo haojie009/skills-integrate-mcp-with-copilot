@@ -1,160 +1,291 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const activitiesList = document.getElementById("activities-list");
-  const activitySelect = document.getElementById("activity");
-  const signupForm = document.getElementById("signup-form");
-  const messageDiv = document.getElementById("message");
+  const listEl = document.getElementById("list");
+  const topPickEl = document.getElementById("top-pick");
+  const listTitle = document.getElementById("list-title");
+  const disclaimerEl = document.getElementById("disclaimer");
+  const dataSourceEl = document.getElementById("data-source");
+  const asOfEl = document.getElementById("as-of");
+  const modal = document.getElementById("modal");
+  const modalBody = document.getElementById("modal-body");
 
-  // Function to fetch activities from API
-  async function fetchActivities() {
-    try {
-      const response = await fetch("/activities");
-      const activities = await response.json();
+  let strategy = "day";
 
-      // Clear loading message
-      activitiesList.innerHTML = "";
+  // ---- 工具函式 -----------------------------------------------------------
+  const fmtPrice = (n) => Number(n).toLocaleString("zh-Hant", { minimumFractionDigits: 2 });
+  const fmtPct = (n) => (n >= 0 ? "+" : "") + Number(n).toFixed(2) + "%";
+  const dirClass = (n) => (n >= 0 ? "up" : "down");
 
-      // Populate activities list
-      Object.entries(activities).forEach(([name, details]) => {
-        const activityCard = document.createElement("div");
-        activityCard.className = "activity-card";
+  function actionClass(action) {
+    if (action === "強烈買進") return "act-strong";
+    if (action === "買進") return "act-buy";
+    if (action === "觀望") return "act-hold";
+    return "act-avoid";
+  }
 
-        const spotsLeft =
-          details.max_participants - details.participants.length;
+  function scoreColor(score) {
+    if (score >= 72) return "#e23b3b";
+    if (score >= 60) return "#c9622f";
+    if (score >= 46) return "#7b8da0";
+    return "#1aa251";
+  }
 
-        // Create participants HTML with delete icons instead of bullet points
-        const participantsHTML =
-          details.participants.length > 0
-            ? `<div class="participants-section">
-              <h5>Participants:</h5>
-              <ul class="participants-list">
-                ${details.participants
-                  .map(
-                    (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
-                  )
-                  .join("")}
-              </ul>
-            </div>`
-            : `<p><em>No participants yet</em></p>`;
+  function bar(label, score) {
+    const color = scoreColor(score);
+    return `
+      <div class="subscore">
+        <div class="lbl"><span>${label}</span><span>${score.toFixed(0)}</span></div>
+        <div class="bar"><span style="width:${score}%;background:${color}"></span></div>
+      </div>`;
+  }
 
-        activityCard.innerHTML = `
-          <h4>${name}</h4>
-          <p>${details.description}</p>
-          <p><strong>Schedule:</strong> ${details.schedule}</p>
-          <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
-          <div class="participants-container">
-            ${participantsHTML}
+  function signalRow(sig) {
+    const isUp = sig.side === "多";
+    return `<div class="sig"><span class="tag ${isUp ? "tag-up" : "tag-down"}">${sig.side}</span>${sig.text}</div>`;
+  }
+
+  // ---- 卡片渲染 -----------------------------------------------------------
+  function cardHTML(item) {
+    const s = item.scores;
+    const p = item.plan;
+    const sigs = item.top_signals.map(signalRow).join("");
+    return `
+      <div class="card" data-code="${item.code}">
+        <div class="card-head">
+          <span class="rank">#${item.rank}</span>
+          <span class="stock-name">${item.name}</span>
+          <span class="stock-code">${item.code}</span>
+          <span class="sector">${item.sector}</span>
+          <span class="price">
+            <span class="last">${fmtPrice(item.last_close)}</span>
+            <span class="chg ${dirClass(item.change_pct)}">${fmtPct(item.change_pct)}</span>
+          </span>
+        </div>
+        <div class="badges" style="margin-top:10px">
+          <span class="action-badge ${actionClass(p.action)}">${p.action}</span>
+          <span class="score-pill">${item.strategy_label}評分 <b>${item.score.toFixed(0)}</b>／100</span>
+        </div>
+        <div class="subscores">
+          ${bar("技術面", s.technical)}
+          ${bar("基本面", s.fundamental)}
+          ${bar("消息面", s.news)}
+        </div>
+        <div class="plan-grid">
+          <div class="plan-item"><div class="pi-lbl">進場區間</div><div class="pi-val">${fmtPrice(p.entry_low)} ~ ${fmtPrice(p.entry_high)}</div></div>
+          <div class="plan-item"><div class="pi-lbl">停利目標</div><div class="pi-val up">${fmtPrice(p.target)}（+${p.target_pct}%）</div></div>
+          <div class="plan-item"><div class="pi-lbl">停損價</div><div class="pi-val down">${fmtPrice(p.stop)}（-${p.stop_pct}%）</div></div>
+          <div class="plan-item"><div class="pi-lbl">風險報酬比</div><div class="pi-val">${p.risk_reward ? "1 : " + p.risk_reward : "—"}</div></div>
+        </div>
+        <div class="plan-times">
+          <div><b>進場時機：</b>${p.entry_time}</div>
+          <div><b>出場時機：</b>${p.exit_time}</div>
+        </div>
+        <div class="signals">${sigs || '<div class="sig">無明顯訊號</div>'}</div>
+      </div>`;
+  }
+
+  function topPickHTML(item) {
+    const p = item.plan;
+    return `
+      <span class="tp-tag">🏆 ${item.strategy_label}首選</span>
+      <h2>${item.name} <span class="stock-code">${item.code}</span>
+        <span class="action-badge ${actionClass(p.action)}">${p.action}</span></h2>
+      <div class="tp-grid">
+        <div>
+          <div class="pi-lbl">最新收盤</div>
+          <div class="pi-val">${fmtPrice(item.last_close)}
+            <span class="chg ${dirClass(item.change_pct)}">${fmtPct(item.change_pct)}</span></div>
+          <div class="pi-lbl" style="margin-top:8px">綜合評分</div>
+          <div class="pi-val" style="color:var(--gold)">${item.score.toFixed(0)} / 100</div>
+        </div>
+        <div>
+          <div class="pi-lbl">建議進場 ${fmtPrice(p.entry_low)} ~ ${fmtPrice(p.entry_high)}</div>
+          <div class="pi-val up">停利 ${fmtPrice(p.target)}　<span class="down" style="font-weight:600">停損 ${fmtPrice(p.stop)}</span></div>
+          <div class="plan-times">
+            <div><b>進：</b>${p.entry_time}</div>
+            <div><b>出：</b>${p.exit_time}</div>
           </div>
-        `;
+        </div>
+      </div>`;
+  }
 
-        activitiesList.appendChild(activityCard);
+  // ---- 載入排行 -----------------------------------------------------------
+  async function loadRecommendations() {
+    listEl.innerHTML = '<p class="loading">分析中…</p>';
+    topPickEl.classList.add("hidden");
+    try {
+      const res = await fetch(`/api/recommendations?strategy=${strategy}`);
+      if (!res.ok) throw new Error("API 回應失敗");
+      const data = await res.json();
 
-        // Add option to select dropdown
-        const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        activitySelect.appendChild(option);
+      disclaimerEl.textContent = "⚠️ " + data.disclaimer;
+      dataSourceEl.textContent = "資料來源：" + data.data_source;
+      asOfEl.textContent = "資料截至：" + data.as_of;
+      listTitle.textContent = `${data.strategy_name}建議排行（共 ${data.recommendations.length} 檔）`;
+
+      const items = data.recommendations.map((r) => ({
+        ...r,
+        strategy_label: data.strategy_name,
+      }));
+
+      if (items.length) {
+        topPickEl.innerHTML = topPickHTML(items[0]);
+        topPickEl.classList.remove("hidden");
+        topPickEl.onclick = () => openDetail(items[0].code);
+      }
+
+      listEl.innerHTML = items.map(cardHTML).join("");
+      listEl.querySelectorAll(".card").forEach((card) => {
+        card.addEventListener("click", () => openDetail(card.dataset.code));
       });
-
-      // Add event listeners to delete buttons
-      document.querySelectorAll(".delete-btn").forEach((button) => {
-        button.addEventListener("click", handleUnregister);
-      });
-    } catch (error) {
-      activitiesList.innerHTML =
-        "<p>Failed to load activities. Please try again later.</p>";
-      console.error("Error fetching activities:", error);
+    } catch (err) {
+      listEl.innerHTML = `<p class="loading">載入失敗：${err.message}</p>`;
+      console.error(err);
     }
   }
 
-  // Handle unregister functionality
-  async function handleUnregister(event) {
-    const button = event.target;
-    const activity = button.getAttribute("data-activity");
-    const email = button.getAttribute("data-email");
+  // ---- 個股明細 -----------------------------------------------------------
+  function kv(k, v) {
+    return `<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  }
 
+  function planBlock(p) {
+    return `
+      <div class="plan-block">
+        <h5>${p.strategy_name}　|　${p.action}</h5>
+        <div class="kv-grid">
+          ${kv("進場區間", fmtPrice(p.entry_low) + " ~ " + fmtPrice(p.entry_high))}
+          ${kv("停利目標", fmtPrice(p.target) + "（+" + p.target_pct + "%）")}
+          ${kv("停損價", fmtPrice(p.stop) + "（-" + p.stop_pct + "%）")}
+          ${kv("風險報酬比", p.risk_reward ? "1 : " + p.risk_reward : "—")}
+        </div>
+        <div class="plan-times">
+          <div><b>進場時機：</b>${p.entry_time}</div>
+          <div><b>出場時機：</b>${p.exit_time}</div>
+          <div><b>持有方式：</b>${p.holding}</div>
+        </div>
+      </div>`;
+  }
+
+  function modalHTML(d) {
+    const ind = d.indicators;
+    const sc = d.scores;
+    const num = (v, dp = 2) => (v === null || v === undefined ? "—" : Number(v).toFixed(dp));
+
+    const sigSection = (title, arr) => {
+      if (!arr.length) return "";
+      const rows = arr
+        .map((s) => signalRow({ side: s[0], text: s[1] }))
+        .join("");
+      return `<div class="modal-section"><h4>${title}</h4><div class="signals">${rows}</div></div>`;
+    };
+
+    const newsRows = d.news.length
+      ? d.news
+          .map((n) => {
+            const side = n.sentiment > 0 ? "多" : n.sentiment < 0 ? "空" : "中";
+            return signalRow({ side, text: `${n.title}（${n.source}）` });
+          })
+          .join("")
+      : '<div class="sig">近期無明顯新聞題材</div>';
+
+    return `
+      <h2>${d.name} <span class="stock-code">${d.code}</span>
+        <span class="sector">${d.sector}</span></h2>
+      <div class="pi-val" style="margin-top:4px">收盤 ${fmtPrice(d.last_close)}
+        <span class="chg ${dirClass(d.change_pct)}">${fmtPct(d.change_pct)}</span></div>
+
+      <div class="modal-section">
+        <h4>綜合評分</h4>
+        <div class="kv-grid">
+          ${kv("技術面", num(sc.technical, 0))}
+          ${kv("基本面", num(sc.fundamental, 0))}
+          ${kv("消息面", num(sc.news, 0))}
+          ${kv("當沖評分", num(sc.day, 0))}
+          ${kv("隔日沖評分", num(sc.overnight, 0))}
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h4>技術指標</h4>
+        <div class="kv-grid">
+          ${kv("MA5", num(ind.ma5))}
+          ${kv("MA10", num(ind.ma10))}
+          ${kv("MA20", num(ind.ma20))}
+          ${kv("MA60", num(ind.ma60))}
+          ${kv("RSI(14)", num(ind.rsi14, 0))}
+          ${kv("KD", ind.kd ? num(ind.kd.k, 0) + " / " + num(ind.kd.d, 0) : "—")}
+          ${kv("MACD柱", ind.macd ? num(ind.macd.hist, 3) : "—")}
+          ${kv("量能比", num(ind.vol_ratio) + " 倍")}
+          ${kv("ATR(14)", num(ind.atr14))}
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h4>基本面</h4>
+        <div class="kv-grid">
+          ${kv("本益比 PE", num(d.fundamentals.pe, 1))}
+          ${kv("股價淨值比 PB", num(d.fundamentals.pb, 1))}
+          ${kv("EPS 年增率", d.fundamentals.eps_growth === null ? "—" : d.fundamentals.eps_growth + "%")}
+          ${kv("殖利率", d.fundamentals.yield_pct === null ? "—" : d.fundamentals.yield_pct + "%")}
+          ${kv("ROE", d.fundamentals.roe === null ? "—" : d.fundamentals.roe + "%")}
+        </div>
+      </div>
+
+      ${sigSection("技術面訊號", d.signals.technical)}
+      ${sigSection("基本面訊號", d.signals.fundamental)}
+
+      <div class="modal-section"><h4>消息面新聞</h4><div class="signals">${newsRows}</div></div>
+
+      <div class="modal-section">
+        <h4>買賣計畫</h4>
+        ${planBlock(d.plans.day)}
+        ${planBlock(d.plans.overnight)}
+      </div>
+
+      <p style="font-size:0.76rem;color:var(--muted);margin-top:16px">⚠️ ${d.disclaimer}</p>
+    `;
+  }
+
+  async function openDetail(code) {
+    modalBody.innerHTML = '<p class="loading">載入個股明細…</p>';
+    modal.classList.remove("hidden");
     try {
-      const response = await fetch(
-        `/activities/${encodeURIComponent(
-          activity
-        )}/unregister?email=${encodeURIComponent(email)}`,
-        {
-          method: "DELETE",
-        }
-      );
-
-      const result = await response.json();
-
-      if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
-
-        // Refresh activities list to show updated participants
-        fetchActivities();
-      } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
-      }
-
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
-    } catch (error) {
-      messageDiv.textContent = "Failed to unregister. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
-      console.error("Error unregistering:", error);
+      const res = await fetch(`/api/stock/${code}`);
+      if (!res.ok) throw new Error("查無此個股");
+      const d = await res.json();
+      modalBody.innerHTML = modalHTML(d);
+    } catch (err) {
+      modalBody.innerHTML = `<p class="loading">載入失敗：${err.message}</p>`;
     }
   }
 
-  // Handle form submission
-  signupForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  function closeModal() {
+    modal.classList.add("hidden");
+  }
 
-    const email = document.getElementById("email").value;
-    const activity = document.getElementById("activity").value;
-
-    try {
-      const response = await fetch(
-        `/activities/${encodeURIComponent(
-          activity
-        )}/signup?email=${encodeURIComponent(email)}`,
-        {
-          method: "POST",
-        }
-      );
-
-      const result = await response.json();
-
-      if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
-        signupForm.reset();
-
-        // Refresh activities list to show updated participants
-        fetchActivities();
-      } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
-      }
-
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
-    } catch (error) {
-      messageDiv.textContent = "Failed to sign up. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
-      console.error("Error signing up:", error);
-    }
+  // ---- 事件綁定 -----------------------------------------------------------
+  document.querySelectorAll(".strategy-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".strategy-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      strategy = btn.dataset.strategy;
+      loadRecommendations();
+    });
   });
 
-  // Initialize app
-  fetchActivities();
+  document.getElementById("refresh-btn").addEventListener("click", async () => {
+    await fetch("/api/refresh", { method: "POST" });
+    loadRecommendations();
+  });
+
+  document.getElementById("modal-close").addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeModal();
+  });
+
+  // ---- 初始化 -------------------------------------------------------------
+  loadRecommendations();
 });

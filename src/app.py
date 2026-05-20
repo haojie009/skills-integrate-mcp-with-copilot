@@ -1,81 +1,74 @@
 """
-High School Management System API
+台股當沖／隔日沖選股助手 API
 
-A super simple FastAPI application that allows students to view and sign up
-for extracurricular activities at Mergington High School.
+結合「技術面 + 基本面 + 消息面」對台股個股評分，
+並依當沖（day）與隔日沖（overnight）兩種策略給出進出場價位與時間建議。
+
+啟動方式：
+    cd src && uvicorn app:app --reload
+
+資料來源以環境變數 STOCK_DATA_MODE 控制（demo / live），預設 demo。
+
+──────────────────────────────────────────────────────────────────────────
+⚠️  風險聲明
+    本系統所有評分、訊號與買賣計畫皆由公開資料與量化規則自動產生，
+    僅供教學與研究參考，不構成任何投資建議或買賣要約。
+    當沖與隔日沖屬高風險交易，可能造成大幅虧損，請自行評估並承擔風險。
+──────────────────────────────────────────────────────────────────────────
 """
+
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
-import os
-from pathlib import Path
 
-app = FastAPI(title="Mergington High School API",
-              description="API for viewing and signing up for extracurricular activities")
+import analysis
+import data_provider
 
-# Mount the static files directory
+app = FastAPI(
+    title="台股當沖／隔日沖選股助手",
+    description="以技術面、基本面、消息面綜合評分，提供當沖與隔日沖參考訊號（非投資建議）",
+    version="1.0.0",
+)
+
 current_dir = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
-          "static")), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(current_dir, "static")), name="static")
 
-# In-memory activity database
-activities = {
-    "Chess Club": {
-        "description": "Learn strategies and compete in chess tournaments",
-        "schedule": "Fridays, 3:30 PM - 5:00 PM",
-        "max_participants": 12,
-        "participants": ["michael@mergington.edu", "daniel@mergington.edu"]
-    },
-    "Programming Class": {
-        "description": "Learn programming fundamentals and build software projects",
-        "schedule": "Tuesdays and Thursdays, 3:30 PM - 4:30 PM",
-        "max_participants": 20,
-        "participants": ["emma@mergington.edu", "sophia@mergington.edu"]
-    },
-    "Gym Class": {
-        "description": "Physical education and sports activities",
-        "schedule": "Mondays, Wednesdays, Fridays, 2:00 PM - 3:00 PM",
-        "max_participants": 30,
-        "participants": ["john@mergington.edu", "olivia@mergington.edu"]
-    },
-    "Soccer Team": {
-        "description": "Join the school soccer team and compete in matches",
-        "schedule": "Tuesdays and Thursdays, 4:00 PM - 5:30 PM",
-        "max_participants": 22,
-        "participants": ["liam@mergington.edu", "noah@mergington.edu"]
-    },
-    "Basketball Team": {
-        "description": "Practice and play basketball with the school team",
-        "schedule": "Wednesdays and Fridays, 3:30 PM - 5:00 PM",
-        "max_participants": 15,
-        "participants": ["ava@mergington.edu", "mia@mergington.edu"]
-    },
-    "Art Club": {
-        "description": "Explore your creativity through painting and drawing",
-        "schedule": "Thursdays, 3:30 PM - 5:00 PM",
-        "max_participants": 15,
-        "participants": ["amelia@mergington.edu", "harper@mergington.edu"]
-    },
-    "Drama Club": {
-        "description": "Act, direct, and produce plays and performances",
-        "schedule": "Mondays and Wednesdays, 4:00 PM - 5:30 PM",
-        "max_participants": 20,
-        "participants": ["ella@mergington.edu", "scarlett@mergington.edu"]
-    },
-    "Math Club": {
-        "description": "Solve challenging problems and participate in math competitions",
-        "schedule": "Tuesdays, 3:30 PM - 4:30 PM",
-        "max_participants": 10,
-        "participants": ["james@mergington.edu", "benjamin@mergington.edu"]
-    },
-    "Debate Team": {
-        "description": "Develop public speaking and argumentation skills",
-        "schedule": "Fridays, 4:00 PM - 5:30 PM",
-        "max_participants": 12,
-        "participants": ["charlotte@mergington.edu", "henry@mergington.edu"]
-    }
-}
+DISCLAIMER = (
+    "本系統評分與買賣計畫由公開資料及量化規則自動產生，僅供教學研究參考，"
+    "不構成投資建議。當沖／隔日沖屬高風險交易，請自行評估並承擔盈虧。"
+)
+
+# 啟動時載入並分析一次，結果快取於記憶體
+_analyzed: list[dict] = []
+
+
+def _refresh():
+    global _analyzed
+    stocks = data_provider.load_stocks()
+    _analyzed = [analysis.analyze_stock(s) for s in stocks]
+    return _analyzed
+
+
+_refresh()
+
+
+def _as_of() -> str:
+    if _analyzed:
+        return _analyzed[0]["history"][-1]["date"]
+    return ""
+
+
+def _top_signals(result: dict, limit: int = 4) -> list:
+    """挑出最具代表性的訊號（技術面優先，多空交錯呈現）。"""
+    picked = []
+    for face in ("technical", "news", "fundamental"):
+        for sig in result["signals"][face]:
+            if sig[0] in ("多", "空"):
+                picked.append({"face": face, "side": sig[0], "text": sig[1]})
+    return picked[:limit]
 
 
 @app.get("/")
@@ -83,50 +76,58 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
-@app.get("/activities")
-def get_activities():
-    return activities
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "stocks": len(_analyzed), "data_source": data_provider.data_source_label()}
 
 
-@app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
-    # Validate activity exists
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
+@app.get("/api/recommendations")
+def recommendations(strategy: str = "day"):
+    """依策略回傳排序後的選股建議。strategy = day（當沖）｜overnight（隔日沖）。"""
+    if strategy not in ("day", "overnight"):
+        raise HTTPException(status_code=400, detail="strategy 僅接受 day 或 overnight")
 
-    # Get the specific activity
-    activity = activities[activity_name]
+    items = []
+    for r in _analyzed:
+        plan = r["plans"][strategy]
+        items.append({
+            "code": r["code"],
+            "name": r["name"],
+            "sector": r["sector"],
+            "last_close": r["last_close"],
+            "change_pct": r["change_pct"],
+            "score": r["scores"][strategy],
+            "scores": r["scores"],
+            "action": plan["action"],
+            "actionable": plan["actionable"],
+            "plan": plan,
+            "top_signals": _top_signals(r),
+        })
+    items.sort(key=lambda x: x["score"], reverse=True)
+    for rank, item in enumerate(items, start=1):
+        item["rank"] = rank
 
-    # Validate student is not already signed up
-    if email in activity["participants"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Student is already signed up"
-        )
-
-    # Add student
-    activity["participants"].append(email)
-    return {"message": f"Signed up {email} for {activity_name}"}
+    return {
+        "strategy": strategy,
+        "strategy_name": "當沖" if strategy == "day" else "隔日沖",
+        "data_source": data_provider.data_source_label(),
+        "as_of": _as_of(),
+        "disclaimer": DISCLAIMER,
+        "recommendations": items,
+    }
 
 
-@app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
-    # Validate activity exists
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
+@app.get("/api/stock/{code}")
+def stock_detail(code: str):
+    """單一個股完整分析：三大面向訊號、指標、新聞與兩種策略計畫。"""
+    for r in _analyzed:
+        if r["code"] == code:
+            return {"disclaimer": DISCLAIMER, "as_of": _as_of(), **r}
+    raise HTTPException(status_code=404, detail=f"查無代號 {code} 的個股")
 
-    # Get the specific activity
-    activity = activities[activity_name]
 
-    # Validate student is signed up
-    if email not in activity["participants"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Student is not signed up for this activity"
-        )
-
-    # Remove student
-    activity["participants"].remove(email)
-    return {"message": f"Unregistered {email} from {activity_name}"}
+@app.post("/api/refresh")
+def refresh():
+    """重新載入並分析資料（live 模式會重新抓取證交所資料）。"""
+    _refresh()
+    return {"status": "refreshed", "stocks": len(_analyzed), "as_of": _as_of()}

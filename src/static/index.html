@@ -1,48 +1,51 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mergington High School Activities</title>
+    <title>台股當沖／隔日沖選股助手</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header>
-      <h1>Mergington High School</h1>
-      <h2>Extracurricular Activities</h2>
+      <h1>台股當沖／隔日沖選股助手</h1>
+      <p class="subtitle">技術面 ＋ 基本面 ＋ 消息面 綜合評分　|　告訴你「買哪支、何時進、何時出」</p>
     </header>
 
+    <div id="disclaimer" class="disclaimer">載入中…</div>
+
     <main>
-      <section id="activities-container">
-        <h3>Available Activities</h3>
-        <div id="activities-list">
-          <!-- Activities will be loaded here -->
-          <p>Loading activities...</p>
+      <section class="controls">
+        <div class="strategy-toggle">
+          <button class="strategy-btn active" data-strategy="day">當沖（當日沖銷）</button>
+          <button class="strategy-btn" data-strategy="overnight">隔日沖（留倉一晚）</button>
+        </div>
+        <div class="meta">
+          <span id="data-source"></span>
+          <span id="as-of"></span>
+          <button id="refresh-btn" title="重新分析">↻ 更新</button>
         </div>
       </section>
 
-      <section id="signup-container">
-        <h3>Sign Up for an Activity</h3>
-        <form id="signup-form">
-          <div class="form-group">
-            <label for="email">Student Email:</label>
-            <input type="email" id="email" required placeholder="your-email@mergington.edu" />
-          </div>
-          <div class="form-group">
-            <label for="activity">Select Activity:</label>
-            <select id="activity" required>
-              <option value="">-- Select an activity --</option>
-              <!-- Activity options will be loaded here -->
-            </select>
-          </div>
-          <button type="submit">Sign Up</button>
-        </form>
-        <div id="message" class="hidden"></div>
+      <section id="top-pick" class="top-pick hidden"></section>
+
+      <section id="recommendations">
+        <h3 id="list-title">建議排行</h3>
+        <div id="list" class="card-list">
+          <p class="loading">分析中…</p>
+        </div>
       </section>
     </main>
 
+    <div id="modal" class="modal hidden">
+      <div class="modal-box">
+        <button id="modal-close" class="modal-close">✕</button>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+
     <footer>
-      <p>&copy; 2023 Mergington High School</p>
+      <p>本工具僅供教學與研究，所有評分與買賣計畫均為量化規則自動產生，<strong>非投資建議</strong>。</p>
     </footer>
 
     <script src="app.js"></script>

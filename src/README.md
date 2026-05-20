@@ -1,50 +1,35 @@
-# Mergington High School Activities API
+# 台股當沖／隔日沖選股助手 — 原始碼
 
-A super simple FastAPI application that allows students to view and sign up for extracurricular activities.
+FastAPI 應用程式：以技術面、基本面、消息面綜合評分，提供台股當沖／隔日沖參考訊號。
 
-## Features
+## 檔案
 
-- View all available extracurricular activities
-- Sign up for activities
+| 檔案 | 說明 |
+| ---- | ---- |
+| `app.py` | FastAPI 入口與 API 路由 |
+| `analysis.py` | 技術指標、三面向評分、買賣計畫產生 |
+| `data_provider.py` | 資料來源層（demo 模擬資料／live 證交所 API） |
+| `static/` | 前端單頁應用（`index.html`／`app.js`／`styles.css`） |
 
-## Getting Started
+## 執行
 
-1. Install the dependencies:
+從 repo 根目錄：
 
-   ```
-   pip install fastapi uvicorn
-   ```
+```bash
+pip install -r requirements.txt
+uvicorn app:app --app-dir src --reload
+```
 
-2. Run the application:
+- 前端頁面：<http://127.0.0.1:8000>
+- API 文件：<http://127.0.0.1:8000/docs>
 
-   ```
-   python app.py
-   ```
+## API 端點
 
-3. Open your browser and go to:
-   - API documentation: http://localhost:8000/docs
-   - Alternative documentation: http://localhost:8000/redoc
+| 方法 | 端點 | 說明 |
+| ---- | ---- | ---- |
+| GET  | `/api/recommendations?strategy=day\|overnight` | 選股建議排行 |
+| GET  | `/api/stock/{code}` | 單一個股完整分析 |
+| GET  | `/api/health` | 健康檢查 |
+| POST | `/api/refresh` | 重新載入並分析資料 |
 
-## API Endpoints
-
-| Method | Endpoint                                                          | Description                                                         |
-| ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------- |
-| GET    | `/activities`                                                     | Get all activities with their details and current participant count |
-| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Sign up for an activity                                             |
-
-## Data Model
-
-The application uses a simple data model with meaningful identifiers:
-
-1. **Activities** - Uses activity name as identifier:
-
-   - Description
-   - Schedule
-   - Maximum number of participants allowed
-   - List of student emails who are signed up
-
-2. **Students** - Uses email as identifier:
-   - Name
-   - Grade level
-
-All data is stored in memory, which means data will be reset when the server restarts.
+> ⚠️ 所有評分與買賣計畫皆為量化規則自動產生，僅供教學研究，非投資建議。
