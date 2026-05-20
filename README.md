@@ -79,11 +79,11 @@ STOCK_DATA_MODE=demo uvicorn app:app --app-dir src
 
 | 方法 | 路徑 | 說明 |
 | ---- | ---- | ---- |
-| GET  | `/api/recommendations?strategy=day\|overnight` | 選股建議排行 |
-| GET  | `/api/stock/{code}` | 單一個股完整分析 |
+| GET  | `/api/screener?limit=200` | 全市場當沖選股排行 |
+| GET  | `/api/stock/{code}?name=` | 單一個股完整分析 |
 | GET  | `/api/ai-analysis/{code}` | Claude 多代理 AI 分析 |
 | GET  | `/api/health` | 服務健康檢查 |
-| POST | `/api/refresh` | 重新載入並分析資料 |
+| POST | `/api/refresh` | 清空快取、重新掃描 |
 
 ## AI 多代理分析
 

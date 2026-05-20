@@ -743,6 +743,107 @@ def chart_series(history):
     }
 
 
+# ---------------------------------------------------------------------------
+# 當沖選股：以單日量價評估「當沖適合度」
+# ---------------------------------------------------------------------------
+
+
+def screen_score(row):
+    """依單日量價計算當沖適合度（0~100）與標籤。
+
+    row 需含 open/high/low/close/change/turnover（成交金額，元）。
+    當沖最看重三件事：流動性（進得去出得來）、波動度（有空間賺）、動能（今天有在動）。
+    """
+    close = row["close"]
+    change = row.get("change") or 0.0
+    prev_close = close - change
+    if prev_close <= 0:
+        prev_close = close
+    high = row.get("high") or close
+    low = row.get("low") or close
+    turnover_yi = (row.get("turnover") or 0.0) / 1e8  # 成交金額（億元）
+
+    change_pct = change / prev_close * 100
+    amplitude_pct = (high - low) / prev_close * 100
+    abs_chg = abs(change_pct)
+
+    score = 0.0
+    tags = []
+
+    # 流動性（當沖第一要件）
+    if turnover_yi >= 10:
+        score += 35
+        tags.append("大量")
+    elif turnover_yi >= 3:
+        score += 30
+    elif turnover_yi >= 1:
+        score += 22
+    elif turnover_yi >= 0.3:
+        score += 10
+    # 低於 0.3 億：流動性太差，不加分
+
+    # 波動度（振幅甜蜜點 3.5%~9%）
+    if 3.5 <= amplitude_pct <= 9:
+        score += 32
+        tags.append("波動足")
+    elif 2 <= amplitude_pct < 3.5:
+        score += 20
+    elif 9 < amplitude_pct <= 13:
+        score += 24
+    elif amplitude_pct > 13:
+        score += 12  # 過度激烈，易追高殺低
+    else:
+        score += 6
+
+    # 動能（今天有沒有在走）
+    if abs_chg >= 5:
+        score += 22
+    elif abs_chg >= 2:
+        score += 16
+    elif abs_chg >= 1:
+        score += 9
+    else:
+        score += 3
+    if change_pct >= 3:
+        tags.append("強勢")
+    elif change_pct <= -3:
+        tags.append("弱勢")
+
+    # 小型有爆發力：非權值大量、但振幅與漲跌幅都大
+    if turnover_yi < 8 and amplitude_pct >= 6 and abs_chg >= 4:
+        score += 11
+        tags.append("小型爆發")
+
+    # 三大法人買賣超（當沖時機條件之一）
+    inst_lots = row.get("inst_lots")
+    if inst_lots is not None:
+        volume_lots = (row.get("volume_shares") or 0) / 1000
+        inst_ratio = inst_lots / volume_lots if volume_lots > 0 else 0.0
+        if inst_ratio >= 0.15:
+            score += 14
+            tags.append("法人大買")
+        elif inst_ratio >= 0.05:
+            score += 8
+            tags.append("法人偏多")
+        elif inst_ratio <= -0.15:
+            score -= 10
+            tags.append("法人賣超")
+        elif inst_ratio <= -0.05:
+            score -= 4
+        if (row.get("trust_lots") or 0) >= 500 and "投信買超" not in tags:
+            tags.append("投信買超")
+
+    return {
+        "score": round(_clamp(score), 1),
+        "change_pct": round(change_pct, 2),
+        "amplitude_pct": round(amplitude_pct, 2),
+        "turnover_yi": round(turnover_yi, 2),
+        "inst_lots": inst_lots,
+        "trust_lots": row.get("trust_lots"),
+        "tags": tags,
+    }
+
+
 def analyze_stock(stock):
     """對單一個股做完整分析，回傳含三面向、綜合評分與兩種策略計畫的結果。"""
     history = stock["history"]
@@ -789,6 +890,7 @@ def analyze_stock(stock):
         },
         "news": news["scored_news"],
         "fundamentals": stock["fundamentals"],
+        "institutional": stock.get("institutional"),
         "plans": plans,
         "history": history,
         "series": chart_series(history),

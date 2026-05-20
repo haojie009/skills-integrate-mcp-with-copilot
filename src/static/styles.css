@@ -78,6 +78,73 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
 }
 #refresh-btn:hover { border-color: var(--gold); }
 
+/* 排序切換 */
+.sort-toggle { display: flex; gap: 6px; flex-wrap: wrap; }
+.sort-btn {
+  padding: 8px 13px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+.sort-btn.active {
+  background: var(--up);
+  border-color: var(--up);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 選股清單 */
+.screener-list { display: flex; flex-direction: column; gap: 8px; }
+.srow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: 0.12s;
+}
+.srow:hover { border-color: var(--gold); transform: translateY(-1px); }
+.srank {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 26px;
+  text-align: center;
+}
+.sinfo { flex: 1; min-width: 0; }
+.sname { font-size: 1rem; font-weight: 600; }
+.scode { color: var(--muted); font-size: 0.8rem; font-weight: 400; }
+.smetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.smetrics b { color: var(--text); }
+.sscore { text-align: center; min-width: 48px; }
+.sscore-num { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+.sscore-lbl { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
+.tag-chip {
+  display: inline-block;
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+.tag-chip.tag-up { background: rgba(226, 59, 59, 0.22); color: #ff8e8e; }
+.tag-chip.tag-down { background: rgba(26, 162, 81, 0.22); color: #6fdca0; }
+.tag-chip.tag-gold { background: rgba(244, 183, 64, 0.22); color: var(--gold); }
+.tag-chip.tag-mid { background: var(--panel-2); color: var(--muted); }
+
 /* 首選股 */
 .top-pick {
   background: linear-gradient(150deg, #243a2e, #1b2a3c);

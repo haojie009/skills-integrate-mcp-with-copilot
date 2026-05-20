@@ -1,19 +1,19 @@
 """
-台股當沖／隔日沖選股助手 API
+台股當沖選股雷達 API
 
-結合「技術面 + 基本面 + 消息面」對台股個股評分，
-並依當沖（day）與隔日沖（overnight）兩種策略給出進出場價位與時間建議。
+掃描全市場上市個股，依「流動性、波動度、動能」挑出最適合當沖的標的；
+點選個股可再做技術面／基本面／消息面分析、技術線圖與 Claude AI 多代理判斷。
 
 啟動方式：
-    cd src && uvicorn app:app --reload
+    uvicorn app:app --app-dir src --reload
 
-資料來源以環境變數 STOCK_DATA_MODE 控制（demo / live），預設 demo。
+資料來源以環境變數 STOCK_DATA_MODE 控制（live / demo），Render 預設 live。
 
 ──────────────────────────────────────────────────────────────────────────
 ⚠️  風險聲明
     本系統所有評分、訊號與買賣計畫皆由公開資料與量化規則自動產生，
     僅供教學與研究參考，不構成任何投資建議或買賣要約。
-    當沖與隔日沖屬高風險交易，可能造成大幅虧損，請自行評估並承擔風險。
+    當沖屬高風險交易，可能造成大幅虧損，請自行評估並承擔風險。
 ──────────────────────────────────────────────────────────────────────────
 """
 
@@ -36,9 +36,9 @@ class UTF8JSONResponse(JSONResponse):
 
 
 app = FastAPI(
-    title="台股當沖／隔日沖選股助手",
-    description="以技術面、基本面、消息面綜合評分，提供當沖與隔日沖參考訊號（非投資建議）",
-    version="1.0.0",
+    title="台股當沖選股雷達",
+    description="掃描全市場上市個股，依流動性、波動、動能挑出當沖標的（非投資建議）",
+    version="2.0.0",
     default_response_class=UTF8JSONResponse,
 )
 
@@ -47,38 +47,38 @@ app.mount("/static", StaticFiles(directory=os.path.join(current_dir, "static")),
 
 DISCLAIMER = (
     "本系統評分與買賣計畫由公開資料及量化規則自動產生，僅供教學研究參考，"
-    "不構成投資建議。當沖／隔日沖屬高風險交易，請自行評估並承擔盈虧。"
+    "不構成投資建議。當沖屬高風險交易，請自行評估並承擔盈虧。"
 )
 
-# 啟動時載入並分析一次，結果快取於記憶體
-_analyzed: list[dict] = []
+# 記憶體快取
+_screener_cache: list | None = None   # 排序後的當沖選股清單
+_detail_cache: dict = {}              # code -> analyze_stock 結果
 
 
-def _refresh():
-    global _analyzed
-    stocks = data_provider.load_stocks()
-    _analyzed = [analysis.analyze_stock(s) for s in stocks]
-    ai_advisor.clear_cache()
-    return _analyzed
+def _get_screener() -> list:
+    """取得（並快取）依當沖適合度排序的個股清單。"""
+    global _screener_cache
+    if _screener_cache is None:
+        scored = []
+        for row in data_provider.load_screener():
+            scored.append({**row, **analysis.screen_score(row)})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        for rank, item in enumerate(scored, start=1):
+            item["rank"] = rank
+        _screener_cache = scored
+    return _screener_cache
 
 
-_refresh()
-
-
-def _as_of() -> str:
-    if _analyzed:
-        return _analyzed[0]["history"][-1]["date"]
-    return ""
-
-
-def _top_signals(result: dict, limit: int = 4) -> list:
-    """挑出最具代表性的訊號（技術面優先，多空交錯呈現）。"""
-    picked = []
-    for face in ("technical", "news", "fundamental"):
-        for sig in result["signals"][face]:
-            if sig[0] in ("多", "空"):
-                picked.append({"face": face, "side": sig[0], "text": sig[1]})
-    return picked[:limit]
+def _get_detail(code: str, name: str = ""):
+    """取得（並快取）單一個股的完整分析。查無資料回傳 None。"""
+    if code in _detail_cache:
+        return _detail_cache[code]
+    stock = data_provider.load_one_stock(code, name)
+    if stock is None:
+        return None
+    result = analysis.analyze_stock(stock)
+    _detail_cache[code] = result
+    return result
 
 
 @app.get("/")
@@ -90,68 +90,47 @@ def root():
 def health():
     return {
         "status": "ok",
-        "stocks": len(_analyzed),
         "data_source": data_provider.data_source_label(),
         "ai_enabled": ai_advisor.ai_enabled(),
     }
 
 
-@app.get("/api/recommendations")
-def recommendations(strategy: str = "day"):
-    """依策略回傳排序後的選股建議。strategy = day（當沖）｜overnight（隔日沖）。"""
-    if strategy not in ("day", "overnight"):
-        raise HTTPException(status_code=400, detail="strategy 僅接受 day 或 overnight")
-
-    items = []
-    for r in _analyzed:
-        plan = r["plans"][strategy]
-        items.append({
-            "code": r["code"],
-            "name": r["name"],
-            "sector": r["sector"],
-            "last_close": r["last_close"],
-            "change_pct": r["change_pct"],
-            "score": r["scores"][strategy],
-            "scores": r["scores"],
-            "action": plan["action"],
-            "actionable": plan["actionable"],
-            "plan": plan,
-            "top_signals": _top_signals(r),
-        })
-    items.sort(key=lambda x: x["score"], reverse=True)
-    for rank, item in enumerate(items, start=1):
-        item["rank"] = rank
-
+@app.get("/api/screener")
+def screener(limit: int = 200):
+    """全市場當沖選股排行（依當沖適合度由高到低）。"""
+    rows = _get_screener()
     return {
-        "strategy": strategy,
-        "strategy_name": "當沖" if strategy == "day" else "隔日沖",
         "data_source": data_provider.data_source_label(),
-        "as_of": _as_of(),
         "disclaimer": DISCLAIMER,
-        "recommendations": items,
+        "total": len(rows),
+        "stocks": rows[: max(1, limit)],
     }
 
 
 @app.get("/api/stock/{code}")
-def stock_detail(code: str):
-    """單一個股完整分析：三大面向訊號、指標、新聞與兩種策略計畫。"""
-    for r in _analyzed:
-        if r["code"] == code:
-            return {"disclaimer": DISCLAIMER, "as_of": _as_of(), **r}
-    raise HTTPException(status_code=404, detail=f"查無代號 {code} 的個股")
+def stock_detail(code: str, name: str = ""):
+    """單一個股完整分析：技術指標、線圖序列、訊號、買賣計畫。"""
+    result = _get_detail(code, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"查無代號 {code}，或歷史資料不足")
+    return {"disclaimer": DISCLAIMER, **result}
 
 
 @app.get("/api/ai-analysis/{code}")
-def ai_analysis(code: str):
+def ai_analysis(code: str, name: str = ""):
     """對指定個股執行 Claude 多代理 AI 分析（需設定 ANTHROPIC_API_KEY）。"""
-    for r in _analyzed:
-        if r["code"] == code:
-            return {"disclaimer": DISCLAIMER, **ai_advisor.analyze(r)}
-    raise HTTPException(status_code=404, detail=f"查無代號 {code} 的個股")
+    result = _get_detail(code, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"查無代號 {code}")
+    return {"disclaimer": DISCLAIMER, **ai_advisor.analyze(result)}
 
 
 @app.post("/api/refresh")
 def refresh():
-    """重新載入並分析資料（live 模式會重新抓取證交所資料）。"""
-    _refresh()
-    return {"status": "refreshed", "stocks": len(_analyzed), "as_of": _as_of()}
+    """清空快取，下次請求會重新掃描與分析。"""
+    global _screener_cache
+    _screener_cache = None
+    _detail_cache.clear()
+    ai_advisor.clear_cache()
+    data_provider.reset_caches()
+    return {"status": "refreshed"}

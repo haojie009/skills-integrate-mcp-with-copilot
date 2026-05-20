@@ -3,36 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>台股當沖／隔日沖選股助手</title>
+    <title>台股當沖選股雷達</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header>
-      <h1>台股當沖／隔日沖選股助手</h1>
-      <p class="subtitle">技術面 ＋ 基本面 ＋ 消息面 綜合評分　|　告訴你「買哪支、何時進、何時出」</p>
+      <h1>台股當沖選股雷達</h1>
+      <p class="subtitle">掃描全市場上市個股　|　依流動性、波動、動能挑出最適合當沖的標的</p>
     </header>
 
     <div id="disclaimer" class="disclaimer">載入中…</div>
 
     <main>
       <section class="controls">
-        <div class="strategy-toggle">
-          <button class="strategy-btn active" data-strategy="day">當沖（當日沖銷）</button>
-          <button class="strategy-btn" data-strategy="overnight">隔日沖（留倉一晚）</button>
+        <div class="sort-toggle">
+          <button class="sort-btn active" data-sort="score">當沖適合度</button>
+          <button class="sort-btn" data-sort="amplitude_pct">振幅</button>
+          <button class="sort-btn" data-sort="change_pct">漲幅</button>
+          <button class="sort-btn" data-sort="turnover_yi">成交金額</button>
         </div>
         <div class="meta">
           <span id="data-source"></span>
-          <span id="as-of"></span>
-          <button id="refresh-btn" title="重新分析">↻ 更新</button>
+          <button id="refresh-btn" title="重新掃描">↻ 更新</button>
         </div>
       </section>
 
-      <section id="top-pick" class="top-pick hidden"></section>
-
-      <section id="recommendations">
-        <h3 id="list-title">建議排行</h3>
-        <div id="list" class="card-list">
-          <p class="loading">分析中…</p>
+      <section id="screener">
+        <h3 id="list-title">當沖適合度排行</h3>
+        <div id="list" class="screener-list">
+          <p class="loading">掃描全市場中…</p>
         </div>
       </section>
     </main>

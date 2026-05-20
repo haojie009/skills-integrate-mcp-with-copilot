@@ -38,8 +38,8 @@ class AIAnalysis(BaseModel):
 
 
 _SYSTEM_PROMPT = """你是「AI 台股短線決策系統」，運作方式參考 TradingAgents 多代理框架。
-你會收到一檔台股的量化分析資料（技術面、基本面、消息面，以及規則式買賣計畫），
-請依序扮演以下四個角色，完成一份「當沖／隔日沖」的短線交易分析：
+你會收到一檔台股的量化分析資料（技術面、基本面、消息面、三大法人買賣超，
+以及規則式買賣計畫），請依序扮演以下四個角色，完成一份「當沖／隔日沖」的短線交易分析：
 
 1. 看多研究員（bull_case）：從提供的資料中，盡力找出做多的理由與有利訊號。
 2. 看空研究員（bear_case）：從提供的資料中，盡力找出做空或避開的理由與風險訊號。
@@ -89,6 +89,15 @@ def _build_user_prompt(stock: dict) -> str:
         for n in stock["news"]
     ) or "  （近期無明顯新聞）"
 
+    inst = stock.get("institutional")
+    if inst:
+        inst_text = (
+            f"外資 {inst['foreign_lots']:+,} 張、投信 {inst['trust_lots']:+,} 張、"
+            f"自營商 {inst['dealer_lots']:+,} 張；三大法人合計 {inst['inst_lots']:+,} 張"
+        )
+    else:
+        inst_text = "（無三大法人資料）"
+
     return f"""個股：{stock['name']}（{stock['code']}）　產業：{stock['sector']}
 最新收盤：{stock['last_close']}　當日漲跌幅：{stock['change_pct']}%
 
@@ -115,6 +124,9 @@ ADX：{_fmt(dmi['adx'] if dmi else None)}（+DI {_fmt(dmi['plus_di'] if dmi else
 
 【消息面新聞】
 {news_lines}
+
+【三大法人買賣超（最近交易日，單位：張，正為買超、負為賣超）】
+{inst_text}
 
 【規則式買賣計畫（系統量化規則自動產生，供你參考）】
 當沖：{day['action']}　進場 {day['entry_low']}~{day['entry_high']}　停利 {day['target']}　停損 {day['stop']}

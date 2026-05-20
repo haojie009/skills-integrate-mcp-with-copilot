@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import random
-import time
 from datetime import date, datetime, timedelta, timezone
 
 # 分析所需的歷史交易日數
@@ -232,6 +231,20 @@ def _generate_history(profile):
     return history
 
 
+def _demo_institutional(code):
+    """demo 模式的三大法人買賣超（單位：張），可重現。"""
+    rnd = random.Random(int(code) * 31 + 7)
+    foreign = rnd.randint(-6000, 11000)
+    trust = rnd.randint(-1500, 3500)
+    dealer = rnd.randint(-1200, 1200)
+    return {
+        "foreign_lots": foreign,
+        "trust_lots": trust,
+        "dealer_lots": dealer,
+        "inst_lots": foreign + trust + dealer,
+    }
+
+
 def _build_demo_stock(profile):
     today = date(2026, 5, 20).isoformat()
     news = [
@@ -245,11 +258,8 @@ def _build_demo_stock(profile):
         "fundamentals": dict(profile["fundamentals"]),
         "news": news,
         "history": _generate_history(profile),
+        "institutional": _demo_institutional(profile["code"]),
     }
-
-
-def _load_demo():
-    return [_build_demo_stock(p) for p in _DEMO_PROFILES]
 
 
 # ---------------------------------------------------------------------------
@@ -342,40 +352,152 @@ def _fetch_twse_fundamentals():
     return _parse_twse_fundamentals(resp.json())
 
 
-def _load_live():
-    """live 模式：抓真實行情，回傳成功抓到的個股清單（可能少於完整檔數）。"""
-    fundamentals = {}
-    try:
-        fundamentals = _fetch_twse_fundamentals()
-    except Exception as exc:  # noqa: BLE001 - 失敗時本益比等欄位留白即可
-        print(f"[data_provider] 基本面抓取失敗，本益比等欄位留白：{exc}")
+# ---------------------------------------------------------------------------
+# 全市場單日行情：證交所 STOCK_DAY_ALL（一次請求取得所有上市個股）
+# ---------------------------------------------------------------------------
 
-    stocks = []
-    for profile in _DEMO_PROFILES:
-        code = profile["code"]
+_TWSE_STOCK_DAY_ALL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+_TWSE_T86 = "https://openapi.twse.com.tw/v1/fund/T86"  # 三大法人買賣超日報
+
+_SECTOR_BY_CODE = {p["code"]: p["sector"] for p in _DEMO_PROFILES}
+_NAME_BY_CODE = {p["code"]: p["name"] for p in _DEMO_PROFILES}
+
+# 全市場快取（各一次抓全市場）
+_fund_cache: dict = {}
+_fund_loaded = False
+_t86_cache: dict = {}
+_t86_loaded = False
+
+
+def _fetch_t86():
+    """抓三大法人買賣超日報（一次請求取得全市場）。"""
+    import requests
+
+    resp = requests.get(_TWSE_T86, headers=_HTTP_HEADERS, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _t86_value(row, *substrs):
+    """在 T86 列中以欄名子字串比對取值（容忍中英文欄名差異）。"""
+    for key, value in row.items():
+        flat = str(key).replace(" ", "")
+        if all(sub in flat for sub in substrs):
+            num = _safe_float(value)
+            if num is not None:
+                return num
+    return None
+
+
+def _parse_t86(rows):
+    """三大法人買賣超日報 → {代號: {外資／投信／自營／合計 張數}}。"""
+    result = {}
+    for row in rows:
+        code = (row.get("Code") or row.get("證券代號") or "").strip()
+        if not code:
+            continue
+        inst = _t86_value(row, "三大法人", "買賣超")
+        trust = _t86_value(row, "投信", "買賣超")
+        foreign = _t86_value(row, "外陸資", "買賣超")
+        if inst is None and trust is None and foreign is None:
+            continue
+        inst = inst or 0.0
+        trust = trust or 0.0
+        foreign = foreign or 0.0
+        result[code] = {
+            "foreign_lots": round(foreign / 1000),
+            "trust_lots": round(trust / 1000),
+            "dealer_lots": round((inst - foreign - trust) / 1000),
+            "inst_lots": round(inst / 1000),
+        }
+    return result
+
+
+def _one_stock_institutional(code):
+    """取單一個股三大法人買賣超（共用全市場 T86 快取）。"""
+    global _t86_cache, _t86_loaded
+    if not _t86_loaded:
         try:
-            history = _fetch_yahoo_history(code)
-            if len(history) < 70:
-                raise ValueError(f"歷史資料不足（{len(history)} 筆）")
-            fund = fundamentals.get(code) or {}
-            stocks.append({
-                "code": code,
-                "name": profile["name"],
-                "sector": profile["sector"],
-                "fundamentals": {
-                    "pe": fund.get("pe"),
-                    "pb": fund.get("pb"),
-                    "yield_pct": fund.get("yield_pct"),
-                    "eps_growth": None,
-                    "roe": None,
-                },
-                "news": [],  # 真實新聞需另接新聞 API
-                "history": history,
-            })
-            time.sleep(0.3)  # 對 Yahoo 客氣，降低被限流機率
+            _t86_cache = _parse_t86(_fetch_t86())
         except Exception as exc:  # noqa: BLE001
-            print(f"[data_provider] {code}（{profile['name']}）live 抓取失敗，略過：{exc}")
-    return stocks
+            print(f"[data_provider] T86 法人資料抓取失敗：{exc}")
+            _t86_cache = {}
+        _t86_loaded = True
+    return _t86_cache.get(code)
+
+
+def _fetch_stock_day_all():
+    """抓全上市個股最近交易日的單日 OHLCV（一次請求取得全市場）。"""
+    import requests
+
+    resp = requests.get(_TWSE_STOCK_DAY_ALL, headers=_HTTP_HEADERS, timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _parse_stock_day_all(rows):
+    """整理 STOCK_DAY_ALL，只保留 4 碼一般股票（排除 ETF 等 0 開頭代號）。"""
+    out = []
+    for row in rows:
+        code = (row.get("Code") or "").strip()
+        if len(code) != 4 or not code.isdigit() or code.startswith("0"):
+            continue
+        close = _safe_float(row.get("ClosingPrice"))
+        if close is None or close <= 0:
+            continue
+        out.append({
+            "code": code,
+            "name": (row.get("Name") or "").strip() or code,
+            "open": _safe_float(row.get("OpeningPrice")),
+            "high": _safe_float(row.get("HighestPrice")),
+            "low": _safe_float(row.get("LowestPrice")),
+            "close": close,
+            "change": _safe_float(row.get("Change")) or 0.0,
+            "volume_shares": _safe_float(row.get("TradeVolume")) or 0.0,
+            "turnover": _safe_float(row.get("TradeValue")) or 0.0,  # 成交金額（元）
+        })
+    return out
+
+
+def _one_stock_fundamentals(code):
+    """取單一個股基本面（共用全市場 BWIBBU_ALL 快取）。"""
+    global _fund_cache, _fund_loaded
+    if not _fund_loaded:
+        try:
+            _fund_cache = _fetch_twse_fundamentals()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[data_provider] 基本面抓取失敗，留白：{exc}")
+            _fund_cache = {}
+        _fund_loaded = True
+    f = _fund_cache.get(code) or {}
+    return {
+        "pe": f.get("pe"),
+        "pb": f.get("pb"),
+        "yield_pct": f.get("yield_pct"),
+        "eps_growth": None,
+        "roe": None,
+    }
+
+
+def _demo_screener_rows():
+    """demo 模式的選股清單：用內建示範股最新一天的量價與法人買賣超。"""
+    rows = []
+    for profile in _DEMO_PROFILES:
+        history = _generate_history(profile)
+        last, prev = history[-1], history[-2]
+        rows.append({
+            "code": profile["code"],
+            "name": profile["name"],
+            "open": last["open"],
+            "high": last["high"],
+            "low": last["low"],
+            "close": last["close"],
+            "change": round(last["close"] - prev["close"], 2),
+            "volume_shares": last["volume"] * 1000,
+            "turnover": last["close"] * last["volume"] * 1000,
+            **_demo_institutional(profile["code"]),
+        })
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -385,24 +507,70 @@ def _load_live():
 _actual_source = "demo"
 
 
-def load_stocks():
-    """載入所有個股資料。live 模式失敗會自動退回 demo。回傳 list[dict]。"""
+def load_screener():
+    """回傳全市場（live）或示範股（demo）的單日量價＋法人買賣超列表。"""
     global _actual_source
     if DATA_MODE == "live":
         try:
-            stocks = _load_live()
+            rows = _parse_stock_day_all(_fetch_stock_day_all())
         except Exception as exc:  # noqa: BLE001
-            print(f"[data_provider] live 模式整體失敗：{exc}")
-            stocks = []
-        if stocks:
+            print(f"[data_provider] STOCK_DAY_ALL 抓取失敗，退回 demo：{exc}")
+            rows = []
+        if rows:
+            t86 = {}
+            try:
+                t86 = _parse_t86(_fetch_t86())
+            except Exception as exc:  # noqa: BLE001
+                print(f"[data_provider] T86 法人資料抓取失敗，法人欄位留白：{exc}")
+            for row in rows:
+                inst = t86.get(row["code"])
+                if inst:
+                    row.update(inst)
             _actual_source = "live"
-            return stocks
-        print("[data_provider] live 模式未取得任何資料，退回 demo。")
+            return rows
     _actual_source = "demo"
-    return _load_demo()
+    return _demo_screener_rows()
+
+
+def load_one_stock(code, name=""):
+    """抓單一個股的完整資料（日 K 歷史＋基本面），供個股明細分析使用。"""
+    name = name or _NAME_BY_CODE.get(code, code)
+    sector = _SECTOR_BY_CODE.get(code, "")
+
+    if DATA_MODE == "live":
+        try:
+            history = _fetch_yahoo_history(code)
+            if len(history) >= 70:
+                return {
+                    "code": code,
+                    "name": name,
+                    "sector": sector,
+                    "fundamentals": _one_stock_fundamentals(code),
+                    "institutional": _one_stock_institutional(code),
+                    "news": [],
+                    "history": history,
+                }
+            print(f"[data_provider] {code} 歷史資料不足（{len(history)} 筆）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[data_provider] {code} live 明細抓取失敗：{exc}")
+
+    # demo 模式或 live 失敗：若為內建示範股則回傳示範資料
+    for profile in _DEMO_PROFILES:
+        if profile["code"] == code:
+            return _build_demo_stock(profile)
+    return None
+
+
+def reset_caches():
+    """清空全市場基本面與法人快取（資料重新整理時呼叫）。"""
+    global _fund_cache, _fund_loaded, _t86_cache, _t86_loaded
+    _fund_cache = {}
+    _fund_loaded = False
+    _t86_cache = {}
+    _t86_loaded = False
 
 
 def data_source_label():
     if _actual_source == "live":
-        return "即時行情 Yahoo Finance／證交所 (live)"
+        return "即時行情 證交所／Yahoo (live)"
     return "內建示範資料 (demo)"

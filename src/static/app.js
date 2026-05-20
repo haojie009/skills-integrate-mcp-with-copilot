@@ -1,14 +1,13 @@
 document.addEventListener("DOMContentLoaded", () => {
   const listEl = document.getElementById("list");
-  const topPickEl = document.getElementById("top-pick");
   const listTitle = document.getElementById("list-title");
   const disclaimerEl = document.getElementById("disclaimer");
   const dataSourceEl = document.getElementById("data-source");
-  const asOfEl = document.getElementById("as-of");
   const modal = document.getElementById("modal");
   const modalBody = document.getElementById("modal-body");
 
-  let strategy = "day";
+  let screenerData = [];
+  let currentSort = "score";
 
   // ---- 工具函式 -----------------------------------------------------------
   const fmtPrice = (n) => Number(n).toLocaleString("zh-Hant", { minimumFractionDigits: 2 });
@@ -69,72 +68,59 @@ document.addEventListener("DOMContentLoaded", () => {
     return `<div class="sig"><span class="tag ${isUp ? "tag-up" : "tag-down"}">${sig.side}</span>${sig.text}</div>`;
   }
 
-  // ---- 卡片渲染 -----------------------------------------------------------
-  function cardHTML(item) {
-    const s = item.scores;
-    const p = item.plan;
-    const sigs = item.top_signals.map(signalRow).join("");
-    return `
-      <div class="card" data-code="${item.code}">
-        <div class="card-head">
-          <span class="rank">#${item.rank}</span>
-          <span class="stock-name">${item.name}</span>
-          <span class="stock-code">${item.code}</span>
-          <span class="sector">${item.sector}</span>
-          <span class="price">
-            <span class="last">${fmtPrice(item.last_close)}</span>
-            <span class="chg ${dirClass(item.change_pct)}">${fmtPct(item.change_pct)}</span>
-          </span>
-        </div>
-        <div class="badges" style="margin-top:10px">
-          <span class="action-badge ${actionClass(p.action)}">${p.action}</span>
-          <span class="score-pill">${item.strategy_label}評分 <b>${item.score.toFixed(0)}</b>／100</span>
-        </div>
-        <div class="subscores">
-          ${bar("技術面", s.technical)}
-          ${bar("基本面", s.fundamental)}
-          ${bar("消息面", s.news)}
-        </div>
-        <div class="plan-grid">
-          <div class="plan-item"><div class="pi-lbl">進場區間</div><div class="pi-val">${fmtPrice(p.entry_low)} ~ ${fmtPrice(p.entry_high)}</div></div>
-          <div class="plan-item"><div class="pi-lbl">停利目標</div><div class="pi-val up">${fmtPrice(p.target)}（+${p.target_pct}%）</div></div>
-          <div class="plan-item"><div class="pi-lbl">停損價</div><div class="pi-val down">${fmtPrice(p.stop)}（-${p.stop_pct}%）</div></div>
-          <div class="plan-item"><div class="pi-lbl">風險報酬比</div><div class="pi-val">${p.risk_reward ? "1 : " + p.risk_reward : "—"}</div></div>
-        </div>
-        <div class="plan-times">
-          <div><b>進場時機：</b>${p.entry_time}</div>
-          <div><b>出場時機：</b>${p.exit_time}</div>
-        </div>
-        <div class="signals">${sigs || '<div class="sig">無明顯訊號</div>'}</div>
-      </div>`;
+  // ---- 選股清單 -----------------------------------------------------------
+  const fmtLots = (n) => {
+    const v = Math.round(n || 0);
+    return (v > 0 ? "+" : "") + v.toLocaleString("zh-Hant");
+  };
+
+  function tagClass(tag) {
+    if (tag === "弱勢" || tag === "法人賣超") return "tag-down";
+    if (tag === "小型爆發" || tag === "投信買超") return "tag-gold";
+    return "tag-up";
   }
 
-  function topPickHTML(item) {
-    const p = item.plan;
+  function screenerRowHTML(s, rank) {
+    const tags = (s.tags || [])
+      .map((t) => `<span class="tag-chip ${tagClass(t)}">${esc(t)}</span>`)
+      .join("");
+    const inst =
+      s.inst_lots === undefined || s.inst_lots === null
+        ? ""
+        : `<span class="${dirClass(s.inst_lots)}">法人 ${fmtLots(s.inst_lots)} 張</span>`;
     return `
-      <span class="tp-tag">🏆 ${item.strategy_label}首選</span>
-      <h2>${item.name} <span class="stock-code">${item.code}</span>
-        <span class="action-badge ${actionClass(p.action)}">${p.action}</span></h2>
-      <div class="tp-grid">
-        <div>
-          <div class="pi-lbl">最新收盤</div>
-          <div class="pi-val">${fmtPrice(item.last_close)}
-            <span class="chg ${dirClass(item.change_pct)}">${fmtPct(item.change_pct)}</span></div>
-          <div class="pi-lbl" style="margin-top:8px">綜合評分</div>
-          <div class="pi-val" style="color:var(--gold)">${item.score.toFixed(0)} / 100</div>
-        </div>
-        <div>
-          <div class="pi-lbl">建議進場 ${fmtPrice(p.entry_low)} ~ ${fmtPrice(p.entry_high)}</div>
-          <div class="pi-val up">停利 ${fmtPrice(p.target)}　<span class="down" style="font-weight:600">停損 ${fmtPrice(p.stop)}</span></div>
-          <div class="plan-times">
-            <div><b>進：</b>${p.entry_time}</div>
-            <div><b>出：</b>${p.exit_time}</div>
+      <div class="srow" data-code="${s.code}" data-name="${esc(s.name)}">
+        <span class="srank">${rank}</span>
+        <div class="sinfo">
+          <div class="sname">${esc(s.name)} <span class="scode">${s.code}</span> ${tags}</div>
+          <div class="smetrics">
+            <span>現價 <b>${fmtPrice(s.close)}</b></span>
+            <span class="${dirClass(s.change_pct)}">${fmtPct(s.change_pct)}</span>
+            <span>振幅 ${s.amplitude_pct}%</span>
+            <span>金額 ${s.turnover_yi} 億</span>
+            ${inst}
           </div>
         </div>
+        <div class="sscore">
+          <div class="sscore-num" style="color:${scoreColor(s.score)}">${Math.round(s.score)}</div>
+          <div class="sscore-lbl">當沖分</div>
+        </div>
       </div>`;
   }
 
-  // ---- 載入排行 -----------------------------------------------------------
+  function renderScreener() {
+    const sorted = [...screenerData].sort(
+      (a, b) => (b[currentSort] ?? 0) - (a[currentSort] ?? 0)
+    );
+    listEl.innerHTML = sorted.map((s, i) => screenerRowHTML(s, i + 1)).join("");
+    listEl.querySelectorAll(".srow").forEach((row) => {
+      row.addEventListener("click", () =>
+        openDetail(row.dataset.code, row.dataset.name)
+      );
+    });
+  }
+
+  // ---- 載入選股清單 -------------------------------------------------------
   function renderError(message) {
     disclaimerEl.textContent = "⚠️ 本工具僅供教學研究，非投資建議。";
     listEl.innerHTML = `
@@ -142,48 +128,27 @@ document.addEventListener("DOMContentLoaded", () => {
         <p>${message}</p>
         <button id="retry-btn" class="retry-btn">重新載入</button>
       </div>`;
-    document.getElementById("retry-btn").addEventListener("click", loadRecommendations);
+    document.getElementById("retry-btn").addEventListener("click", loadScreener);
   }
 
-  async function loadRecommendations() {
-    topPickEl.classList.add("hidden");
+  async function loadScreener() {
     listEl.innerHTML =
-      '<p class="loading">分析中…<br><small>免費主機若處於休眠，首次喚醒約需 30–60 秒，請稍候</small></p>';
+      '<p class="loading">掃描全市場中…<br><small>免費主機若處於休眠，首次喚醒約需 30–60 秒，請稍候</small></p>';
     const onAttempt = (i, total) => {
       if (i > 1) {
         listEl.innerHTML = `<p class="loading">伺服器喚醒中，重試 ${i}/${total}…<br><small>請勿關閉頁面</small></p>`;
       }
     };
     try {
-      const data = await fetchJSON(
-        `/api/recommendations?strategy=${strategy}`,
-        {},
-        { onAttempt }
-      );
-
+      const data = await fetchJSON("/api/screener?limit=200", {}, { onAttempt });
       disclaimerEl.textContent = "⚠️ " + data.disclaimer;
       dataSourceEl.textContent = "資料來源：" + data.data_source;
-      asOfEl.textContent = "資料截至：" + data.as_of;
-      listTitle.textContent = `${data.strategy_name}建議排行（共 ${data.recommendations.length} 檔）`;
-
-      const items = data.recommendations.map((r) => ({
-        ...r,
-        strategy_label: data.strategy_name,
-      }));
-
-      if (items.length) {
-        topPickEl.innerHTML = topPickHTML(items[0]);
-        topPickEl.classList.remove("hidden");
-        topPickEl.onclick = () => openDetail(items[0].code);
-      }
-
-      listEl.innerHTML = items.map(cardHTML).join("");
-      listEl.querySelectorAll(".card").forEach((card) => {
-        card.addEventListener("click", () => openDetail(card.dataset.code));
-      });
+      screenerData = data.stocks || [];
+      listTitle.textContent = `當沖適合度排行（顯示 ${screenerData.length} 檔，掃描 ${data.total} 檔）`;
+      renderScreener();
     } catch (err) {
       renderError(
-        `資料載入失敗：${err.message}。免費主機可能仍在喚醒，請按下方按鈕重試。`
+        `掃描失敗：${err.message}。免費主機可能仍在喚醒，請按下方按鈕重試。`
       );
       console.error(err);
     }
@@ -216,7 +181,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const ind = d.indicators;
     const sc = d.scores;
     const lv = d.levels;
+    const inst = d.institutional;
     const num = (v, dp = 2) => (v === null || v === undefined ? "—" : Number(v).toFixed(dp));
+    const instCell = (key) => {
+      if (!inst || inst[key] == null) return "—";
+      const v = inst[key];
+      return `<span class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${v.toLocaleString("zh-Hant")} 張</span>`;
+    };
     const obvText = ind.obv
       ? { up: "走高 ▲", down: "走低 ▼", flat: "持平" }[ind.obv.trend]
       : "—";
@@ -239,8 +210,8 @@ document.addEventListener("DOMContentLoaded", () => {
       : '<div class="sig">近期無明顯新聞題材</div>';
 
     return `
-      <h2>${d.name} <span class="stock-code">${d.code}</span>
-        <span class="sector">${d.sector}</span></h2>
+      <h2>${esc(d.name)} <span class="stock-code">${d.code}</span>
+        ${d.sector ? `<span class="sector">${esc(d.sector)}</span>` : ""}</h2>
       <div class="pi-val" style="margin-top:4px">收盤 ${fmtPrice(d.last_close)}
         <span class="chg ${dirClass(d.change_pct)}">${fmtPct(d.change_pct)}</span></div>
 
@@ -322,6 +293,22 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
       </div>
 
+      ${
+        inst
+          ? `<div class="modal-section">
+        <h4>三大法人買賣超（最近交易日）</h4>
+        <div class="kv-grid">
+          ${kv("外資", instCell("foreign_lots"))}
+          ${kv("投信", instCell("trust_lots"))}
+          ${kv("自營商", instCell("dealer_lots"))}
+          ${kv("三大法人合計", instCell("inst_lots"))}
+        </div>
+        <div class="plan-times"><div>法人（外資／投信）站在買方，當沖偏多較有撐；
+          投信買超對短線點火尤其關鍵。</div></div>
+      </div>`
+          : ""
+      }
+
       <div class="modal-section">
         <h4>基本面</h4>
         <div class="kv-grid">
@@ -348,12 +335,12 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
   }
 
-  async function openDetail(code) {
+  async function openDetail(code, name) {
     modalBody.innerHTML = '<p class="loading">載入個股明細…</p>';
     modal.classList.remove("hidden");
     try {
       const d = await fetchJSON(
-        `/api/stock/${code}`,
+        `/api/stock/${code}?name=${encodeURIComponent(name || "")}`,
         {},
         { attempts: 3, timeoutMs: 15000 }
       );
@@ -369,7 +356,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>`;
       document
         .getElementById("detail-retry")
-        .addEventListener("click", () => openDetail(code));
+        .addEventListener("click", () => openDetail(code, name));
     }
   }
 
@@ -569,12 +556,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ---- 事件綁定 -----------------------------------------------------------
-  document.querySelectorAll(".strategy-btn").forEach((btn) => {
+  document.querySelectorAll(".sort-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".strategy-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".sort-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      strategy = btn.dataset.strategy;
-      loadRecommendations();
+      currentSort = btn.dataset.sort;
+      renderScreener();
     });
   });
 
@@ -584,9 +571,9 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       await fetchJSON("/api/refresh", { method: "POST" }, { attempts: 2, timeoutMs: 25000 });
     } catch (e) {
-      console.warn("refresh 失敗，仍重新載入排行", e);
+      console.warn("refresh 失敗，仍重新掃描", e);
     }
-    await loadRecommendations();
+    await loadScreener();
     btn.disabled = false;
   });
 
@@ -599,5 +586,5 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // ---- 初始化 -------------------------------------------------------------
-  loadRecommendations();
+  loadScreener();
 });
