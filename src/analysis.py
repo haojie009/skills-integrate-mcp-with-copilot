@@ -2,7 +2,8 @@
 台股當沖／隔日沖分析引擎
 
 提供三大面向的分析：
-  - 技術面：均線、RSI、KD、MACD、布林通道、量能、ATR
+  - 技術面：均線、RSI、KD、MACD、布林通道、量能、ATR、乖離率、威廉指標、
+            CCI、DMI/ADX、OBV、樞紐點支撐壓力、K 線型態
   - 基本面：本益比、股價淨值比、EPS 成長、殖利率、ROE
   - 消息面：以關鍵字對新聞標題做情緒評分
 
@@ -115,6 +116,156 @@ def bollinger(closes, period=20, mult=2.0):
     return {"mid": mid, "upper": mid + mult * sd, "lower": mid - mult * sd}
 
 
+def bias(closes, period=10):
+    """乖離率：股價偏離均線的百分比，短線過大易拉回／反彈"""
+    ma = sma(closes, period)
+    if ma is None or ma == 0:
+        return None
+    return (closes[-1] - ma) / ma * 100
+
+
+def williams_r(highs, lows, closes, period=14):
+    """威廉指標 %R：-100~0，越接近 0 越超買、越接近 -100 越超賣"""
+    if len(closes) < period:
+        return None
+    hh = max(highs[-period:])
+    ll = min(lows[-period:])
+    if hh == ll:
+        return -50.0
+    return (hh - closes[-1]) / (hh - ll) * -100
+
+
+def cci(highs, lows, closes, period=20):
+    """順勢指標 CCI：衡量價格偏離統計均值的程度"""
+    if len(closes) < period:
+        return None
+    tp = [(highs[i] + lows[i] + closes[i]) / 3 for i in range(len(closes))]
+    window = tp[-period:]
+    ma = sum(window) / period
+    mean_dev = sum(abs(x - ma) for x in window) / period
+    if mean_dev == 0:
+        return 0.0
+    return (tp[-1] - ma) / (0.015 * mean_dev)
+
+
+def dmi(highs, lows, closes, period=14):
+    """趨勢指標 DMI：回傳 +DI、-DI 與 ADX（趨勢強度）"""
+    n = len(closes)
+    if n < period * 2 + 1:
+        return None
+    trs, plus_dm, minus_dm = [], [], []
+    for i in range(1, n):
+        up = highs[i] - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        plus_dm.append(up if (up > down and up > 0) else 0.0)
+        minus_dm.append(down if (down > up and down > 0) else 0.0)
+        trs.append(max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1]),
+        ))
+
+    def _wilder(values):
+        out = [sum(values[:period])]
+        for v in values[period:]:
+            out.append(out[-1] - out[-1] / period + v)
+        return out
+
+    str_ = _wilder(trs)
+    sp = _wilder(plus_dm)
+    sm = _wilder(minus_dm)
+    plus_di = [100 * p / t if t else 0.0 for p, t in zip(sp, str_)]
+    minus_di = [100 * m / t if t else 0.0 for m, t in zip(sm, str_)]
+    dx = []
+    for p, m in zip(plus_di, minus_di):
+        total = p + m
+        dx.append(100 * abs(p - m) / total if total else 0.0)
+    if len(dx) >= period:
+        adx = sum(dx[:period]) / period
+        for v in dx[period:]:
+            adx = (adx * (period - 1) + v) / period
+    else:
+        adx = sum(dx) / len(dx) if dx else 0.0
+    return {"plus_di": plus_di[-1], "minus_di": minus_di[-1], "adx": adx}
+
+
+def obv(closes, volumes):
+    """能量潮 OBV：以量能累積確認價格趨勢，回傳值與近期方向"""
+    if len(closes) < 6:
+        return None
+    series = [0.0]
+    acc = 0.0
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i - 1]:
+            acc += volumes[i]
+        elif closes[i] < closes[i - 1]:
+            acc -= volumes[i]
+        series.append(acc)
+    prev = series[-6]
+    if series[-1] > prev:
+        trend = "up"
+    elif series[-1] < prev:
+        trend = "down"
+    else:
+        trend = "flat"
+    return {"value": series[-1], "trend": trend}
+
+
+def pivot_points(history):
+    """古典樞紐點：以前一交易日 HLC 推算當日盤中支撐壓力參考價"""
+    last = history[-1]
+    h, l, c = last["high"], last["low"], last["close"]
+    p = (h + l + c) / 3
+    return {
+        "r2": p + (h - l),
+        "r1": 2 * p - l,
+        "pivot": p,
+        "s1": 2 * p - h,
+        "s2": p - (h - l),
+    }
+
+
+def support_resistance(history, period=20):
+    """近 N 日波段高低點，作為支撐與壓力參考"""
+    window = history[-period:]
+    return {
+        "resistance": max(d["high"] for d in window),
+        "support": min(d["low"] for d in window),
+        "period": period,
+    }
+
+
+def candlestick_pattern(history):
+    """辨識最後一根 K 線型態，回傳 (多／空／中, 說明)"""
+    last = history[-1]
+    prev = history[-2]
+    o, h, l, c = last["open"], last["high"], last["low"], last["close"]
+    rng = h - l
+    if rng <= 0:
+        return ("中", "平盤線，無明顯方向")
+    body = abs(c - o)
+    upper = h - max(o, c)
+    lower = min(o, c) - l
+    bull = c >= o
+    prev_bull = prev["close"] >= prev["open"]
+
+    if bull and not prev_bull and c >= prev["open"] and o <= prev["close"]:
+        return ("多", "多頭吞噬，買方轉強")
+    if not bull and prev_bull and o >= prev["close"] and c <= prev["open"]:
+        return ("空", "空頭吞噬，賣方轉強")
+    if body < rng * 0.12:
+        return ("中", "十字星，多空拉鋸、留意變盤")
+    if bull and body > rng * 0.6:
+        return ("多", "長紅K，買盤積極")
+    if not bull and body > rng * 0.6:
+        return ("空", "長黑K，賣壓沉重")
+    if lower > body * 2 and lower >= upper:
+        return ("多", "長下影線（槌子線），低檔有撐")
+    if upper > body * 2 and upper >= lower:
+        return ("空", "長上影線（流星線），高檔遇壓")
+    return ("中", "一般K線，型態中性")
+
+
 # ---------------------------------------------------------------------------
 # 消息面：關鍵字情緒分析
 # ---------------------------------------------------------------------------
@@ -175,6 +326,15 @@ def technical_analysis(history):
     vol_ma5 = sma(volumes, 5) or volumes[-1]
     vol_ratio = volumes[-1] / vol_ma5 if vol_ma5 else 1.0
     change_pct = (last / closes[-2] - 1) * 100 if len(closes) > 1 else 0.0
+
+    bias10 = bias(closes, 10)
+    wr = williams_r(highs, lows, closes)
+    cci20 = cci(highs, lows, closes)
+    dmi_v = dmi(highs, lows, closes)
+    obv_v = obv(closes, volumes)
+    pivots = pivot_points(history)
+    sr = support_resistance(history, 20)
+    pattern = candlestick_pattern(history)
 
     score = 50.0
     signals = []
@@ -246,6 +406,75 @@ def technical_analysis(history):
             score += 4
             signals.append(("多", "靠近布林下軌，留意跌深反彈"))
 
+    # 乖離率
+    if bias10 is not None:
+        if bias10 > 7:
+            score -= 6
+            signals.append(("空", f"乖離率 +{bias10:.1f}%，短線過熱、拉回機率高"))
+        elif bias10 < -7:
+            score += 5
+            signals.append(("多", f"乖離率 {bias10:.1f}%，跌深、易現反彈"))
+
+    # 威廉指標
+    if wr is not None:
+        if wr <= -80:
+            score += 4
+            signals.append(("多", f"威廉指標 {wr:.0f}，落入超賣區"))
+        elif wr >= -20:
+            score -= 5
+            signals.append(("空", f"威廉指標 {wr:.0f}，進入超買區"))
+
+    # CCI 順勢指標
+    if cci20 is not None:
+        if cci20 > 250:
+            score -= 5
+            signals.append(("空", f"CCI {cci20:.0f}，漲勢過度延伸"))
+        elif cci20 > 100:
+            score += 5
+            signals.append(("多", f"CCI {cci20:.0f}，順勢偏多動能"))
+        elif cci20 < -100:
+            score -= 5
+            signals.append(("空", f"CCI {cci20:.0f}，空方動能強"))
+
+    # DMI / ADX 趨勢強度
+    if dmi_v:
+        if dmi_v["adx"] >= 25 and dmi_v["plus_di"] > dmi_v["minus_di"]:
+            score += 7
+            signals.append(("多", f"ADX {dmi_v['adx']:.0f}，趨勢明確且 +DI 主導偏多"))
+        elif dmi_v["adx"] >= 25 and dmi_v["minus_di"] > dmi_v["plus_di"]:
+            score -= 7
+            signals.append(("空", f"ADX {dmi_v['adx']:.0f}，趨勢明確且 -DI 主導偏空"))
+        elif dmi_v["adx"] < 20:
+            signals.append(("中", f"ADX {dmi_v['adx']:.0f}，趨勢不明、盤整格局"))
+
+    # OBV 量價確認
+    if obv_v:
+        if change_pct > 0 and obv_v["trend"] == "up":
+            score += 5
+            signals.append(("多", "OBV 同步走高，量價齊揚"))
+        elif change_pct > 0 and obv_v["trend"] == "down":
+            score -= 5
+            signals.append(("空", "股價漲但 OBV 走低，量價背離"))
+        elif change_pct < 0 and obv_v["trend"] == "down":
+            score -= 3
+            signals.append(("空", "OBV 持續走低，賣壓未歇"))
+
+    # 當日 K 線型態
+    if pattern[0] == "多":
+        score += 5
+        signals.append(("多", f"K線型態：{pattern[1]}"))
+    elif pattern[0] == "空":
+        score -= 5
+        signals.append(("空", f"K線型態：{pattern[1]}"))
+
+    # 支撐 / 壓力位置
+    if last >= sr["resistance"] * 0.99:
+        score -= 4
+        signals.append(("空", f"逼近 20 日壓力 {sr['resistance']:.1f}，留意賣壓"))
+    elif last <= sr["support"] * 1.01:
+        score += 4
+        signals.append(("多", f"靠近 20 日支撐 {sr['support']:.1f}，跌深有撐"))
+
     volatility_pct = (atr14 / last) if (atr14 and last) else 0.02
 
     return {
@@ -258,7 +487,21 @@ def technical_analysis(history):
             "atr14": _r(atr14), "vol_ratio": _r(vol_ratio),
             "change_pct": _r(change_pct),
             "bollinger": {k: _r(v) for k, v in boll.items()} if boll else None,
+            "bias10": _r(bias10),
+            "williams_r": _r(wr),
+            "cci20": _r(cci20),
+            "dmi": {k: _r(v) for k, v in dmi_v.items()} if dmi_v else None,
+            "obv": {"value": _r(obv_v["value"], 0), "trend": obv_v["trend"]} if obv_v else None,
         },
+        "levels": {
+            "pivot": {k: round_tick(v) for k, v in pivots.items()},
+            "support_resistance": {
+                "resistance": round_tick(sr["resistance"]),
+                "support": round_tick(sr["support"]),
+                "period": sr["period"],
+            },
+        },
+        "pattern": {"side": pattern[0], "text": pattern[1]},
         "volatility_pct": volatility_pct,
     }
 
@@ -468,6 +711,8 @@ def analyze_stock(stock):
             "overnight": scores["overnight"],
         },
         "indicators": tech["indicators"],
+        "levels": tech["levels"],
+        "pattern": tech["pattern"],
         "signals": {
             "technical": tech["signals"],
             "fundamental": fund["signals"],

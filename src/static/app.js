@@ -213,7 +213,11 @@ document.addEventListener("DOMContentLoaded", () => {
   function modalHTML(d) {
     const ind = d.indicators;
     const sc = d.scores;
+    const lv = d.levels;
     const num = (v, dp = 2) => (v === null || v === undefined ? "—" : Number(v).toFixed(dp));
+    const obvText = ind.obv
+      ? { up: "走高 ▲", down: "走低 ▼", flat: "持平" }[ind.obv.trend]
+      : "—";
 
     const sigSection = (title, arr) => {
       if (!arr.length) return "";
@@ -261,6 +265,35 @@ document.addEventListener("DOMContentLoaded", () => {
           ${kv("MACD柱", ind.macd ? num(ind.macd.hist, 3) : "—")}
           ${kv("量能比", num(ind.vol_ratio) + " 倍")}
           ${kv("ATR(14)", num(ind.atr14))}
+          ${kv("乖離率(10日)", ind.bias10 === null ? "—" : num(ind.bias10, 1) + "%")}
+          ${kv("威廉指標 %R", num(ind.williams_r, 0))}
+          ${kv("CCI(20)", num(ind.cci20, 0))}
+          ${kv("ADX 趨勢強度", ind.dmi ? num(ind.dmi.adx, 0) : "—")}
+          ${kv("+DI / -DI", ind.dmi ? num(ind.dmi.plus_di, 0) + " / " + num(ind.dmi.minus_di, 0) : "—")}
+          ${kv("OBV 量能潮", obvText)}
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h4>當沖樞紐點參考價（Pivot Points）</h4>
+        <div class="kv-grid">
+          ${kv("壓力 R2", fmtPrice(lv.pivot.r2))}
+          ${kv("壓力 R1", fmtPrice(lv.pivot.r1))}
+          ${kv("樞紐 P", fmtPrice(lv.pivot.pivot))}
+          ${kv("支撐 S1", fmtPrice(lv.pivot.s1))}
+          ${kv("支撐 S2", fmtPrice(lv.pivot.s2))}
+        </div>
+        <div class="plan-times">
+          <div>盤中站上 <b>R1</b> 偏多、續攻看 <b>R2</b>；跌破 <b>S1</b> 偏空、續弱看 <b>S2</b>；於 <b>P</b> 附近多空易拉鋸。</div>
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h4>波段支撐壓力 ・ 當日K線型態</h4>
+        <div class="kv-grid">
+          ${kv("20 日壓力", fmtPrice(lv.support_resistance.resistance))}
+          ${kv("20 日支撐", fmtPrice(lv.support_resistance.support))}
+          ${kv("當日K線", d.pattern.text)}
         </div>
       </div>
 
