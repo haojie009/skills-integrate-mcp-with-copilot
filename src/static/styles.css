@@ -276,6 +276,26 @@ h3 { margin-bottom: 12px; font-size: 1.1rem; }
 }
 .plan-block h5 { font-size: 0.9rem; margin-bottom: 6px; color: var(--gold); }
 
+/* 技術線圖 */
+.chart-label {
+  font-size: 0.76rem;
+  color: var(--muted);
+  margin: 10px 0 3px;
+}
+.chart-box {
+  width: 100%;
+  height: 260px;
+  background: var(--panel);
+  border-radius: 6px;
+}
+.chart-box.small { height: 150px; }
+.chart-fallback {
+  font-size: 0.84rem;
+  color: var(--muted);
+  padding: 14px;
+  text-align: center;
+}
+
 /* AI 多代理分析 */
 .ai-section {
   background: linear-gradient(150deg, #1d2c40, #221b33);

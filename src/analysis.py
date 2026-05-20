@@ -674,6 +674,75 @@ def build_trade_plan(strategy, score, last_close, volatility_pct):
     }
 
 
+# ---------------------------------------------------------------------------
+# 圖表用指標序列
+# ---------------------------------------------------------------------------
+
+
+def _sma_series(values, period):
+    """簡單移動平均序列（前 period-1 筆為 None）。"""
+    out = []
+    for i in range(len(values)):
+        if i + 1 < period:
+            out.append(None)
+        else:
+            out.append(sum(values[i + 1 - period:i + 1]) / period)
+    return out
+
+
+def macd_series(closes, fast=12, slow=26, signal=9):
+    """回傳 DIF、訊號線、柱狀體三條序列（與 closes 等長）。"""
+    if len(closes) < 2:
+        return [], [], []
+    ema_fast = _ema_series(closes, fast)
+    ema_slow = _ema_series(closes, slow)
+    dif = [f - s for f, s in zip(ema_fast, ema_slow)]
+    sig = _ema_series(dif, signal)
+    hist = [d - s for d, s in zip(dif, sig)]
+    return dif, sig, hist
+
+
+def kd_series(highs, lows, closes, period=9):
+    """回傳 K、D 兩條序列（與 closes 等長，前 period-1 筆為 None）。"""
+    k, d = 50.0, 50.0
+    ks, ds = [], []
+    for i in range(len(closes)):
+        if i + 1 < period:
+            ks.append(None)
+            ds.append(None)
+            continue
+        window_high = max(highs[i - period + 1:i + 1])
+        window_low = min(lows[i - period + 1:i + 1])
+        if window_high == window_low:
+            rsv = 50.0
+        else:
+            rsv = (closes[i] - window_low) / (window_high - window_low) * 100
+        k = k * 2 / 3 + rsv / 3
+        d = d * 2 / 3 + k / 3
+        ks.append(k)
+        ds.append(d)
+    return ks, ds
+
+
+def chart_series(history):
+    """產生繪製技術線圖所需的指標序列（每條皆與 history 等長）。"""
+    closes = [d["close"] for d in history]
+    highs = [d["high"] for d in history]
+    lows = [d["low"] for d in history]
+    dif, sig, hist = macd_series(closes)
+    ks, ds = kd_series(highs, lows, closes)
+    return {
+        "ma5": [_r(x) for x in _sma_series(closes, 5)],
+        "ma10": [_r(x) for x in _sma_series(closes, 10)],
+        "ma20": [_r(x) for x in _sma_series(closes, 20)],
+        "macd_dif": [_r(x, 3) for x in dif],
+        "macd_signal": [_r(x, 3) for x in sig],
+        "macd_hist": [_r(x, 3) for x in hist],
+        "kd_k": [_r(x) for x in ks],
+        "kd_d": [_r(x) for x in ds],
+    }
+
+
 def analyze_stock(stock):
     """對單一個股做完整分析，回傳含三面向、綜合評分與兩種策略計畫的結果。"""
     history = stock["history"]
@@ -722,6 +791,7 @@ def analyze_stock(stock):
         "fundamentals": stock["fundamentals"],
         "plans": plans,
         "history": history,
+        "series": chart_series(history),
     }
 
 

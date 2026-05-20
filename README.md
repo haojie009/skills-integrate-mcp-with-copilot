@@ -20,6 +20,7 @@
 - **買賣計畫**：自動算出進場區間、停利價、停損價、風險報酬比、進出場時間
 - **選股排行**：依綜合評分排序，首選股以金色卡片突顯
 - **個股明細**：點任一卡片可看完整指標、訊號與新聞
+- **技術線圖**：K 線＋均線＋成交量、MACD、KD 三張連動圖表（lightweight-charts）
 - **AI 多代理分析**：參考 [TradingAgents](https://github.com/TauricResearch/TradingAgents)
   的多代理架構，由 Claude 扮演「看多研究員 ／ 看空研究員 ／ 交易員 ／ 風控」
   四個角色，對個股做出短線交易判斷（需設定 `ANTHROPIC_API_KEY`，點開個股時即時執行）
@@ -28,7 +29,8 @@
 
 - 後端：FastAPI（純 Python 計算指標，無需 numpy／pandas）
 - 前端：原生 HTML / CSS / JavaScript（單頁應用）
-- 資料：`demo` 內建模擬資料／`live` 串接證交所公開 API
+- 圖表：lightweight-charts（K 線／MACD／KD）
+- 資料：`live` 真實行情（Yahoo Finance＋證交所）／`demo` 內建模擬資料
 
 ## 本機執行
 
@@ -43,14 +45,15 @@ uvicorn app:app --app-dir src --reload
 
 | 環境變數 `STOCK_DATA_MODE` | 說明 |
 | -------------------------- | ---- |
-| `demo`（預設）             | 內建可重現的模擬資料，免網路 |
-| `live`                     | 透過 `twse.com.tw` 公開 API 抓真實價量與基本面 |
+| `live`（Render 預設）      | 價量取自 Yahoo Finance、本益比等取自證交所 OpenAPI |
+| `demo`                     | 內建可重現的模擬資料，免網路 |
 
 ```bash
-STOCK_DATA_MODE=live uvicorn app:app --app-dir src
+STOCK_DATA_MODE=demo uvicorn app:app --app-dir src
 ```
 
-> live 模式若遇網路限制或抓取失敗，會自動退回 demo 資料。
+> live 模式下個股若抓取失敗會略過該檔，全部失敗才整體退回 demo。
+> EPS 成長率、ROE、新聞不在免費資料來源中，live 模式這幾欄會留白。
 
 ## 部署到 Render
 

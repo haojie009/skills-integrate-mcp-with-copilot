@@ -244,6 +244,20 @@ document.addEventListener("DOMContentLoaded", () => {
       <div class="pi-val" style="margin-top:4px">收盤 ${fmtPrice(d.last_close)}
         <span class="chg ${dirClass(d.change_pct)}">${fmtPct(d.change_pct)}</span></div>
 
+      <div class="modal-section">
+        <h4>技術線圖（近 90 個交易日）</h4>
+        <div class="chart-label">K 線　·　均線 <span style="color:#f4b740">MA5</span>
+          <span style="color:#5fa8e0">MA10</span> <span style="color:#c98bff">MA20</span>　·　成交量</div>
+        <div id="chart-price" class="chart-box"></div>
+        <div class="chart-label">MACD（12,26,9）　<span style="color:#f4b740">DIF</span>
+          <span style="color:#5fa8e0">MACD</span></div>
+        <div id="chart-macd" class="chart-box small"></div>
+        <div class="chart-label">KD（9）　<span style="color:#f4b740">K</span>
+          <span style="color:#5fa8e0">D</span></div>
+        <div id="chart-kd" class="chart-box small"></div>
+        <div id="chart-fallback" class="chart-fallback hidden"></div>
+      </div>
+
       <div class="modal-section ai-section">
         <h4>AI 多代理分析</h4>
         <div id="ai-panel" data-code="${d.code}">
@@ -344,6 +358,7 @@ document.addEventListener("DOMContentLoaded", () => {
         { attempts: 3, timeoutMs: 15000 }
       );
       modalBody.innerHTML = modalHTML(d);
+      renderCharts(d);
       const aiBtn = document.getElementById("ai-run-btn");
       if (aiBtn) aiBtn.addEventListener("click", () => runAIAnalysis(d.code));
     } catch (err) {
@@ -355,6 +370,149 @@ document.addEventListener("DOMContentLoaded", () => {
       document
         .getElementById("detail-retry")
         .addEventListener("click", () => openDetail(code));
+    }
+  }
+
+  // ---- 技術線圖 -----------------------------------------------------------
+  let chartInstances = [];
+
+  function destroyCharts() {
+    chartInstances.forEach((c) => {
+      try {
+        c.remove();
+      } catch (e) {
+        /* 忽略已銷毀的圖表 */
+      }
+    });
+    chartInstances = [];
+  }
+
+  function renderCharts(d) {
+    destroyCharts();
+    const priceEl = document.getElementById("chart-price");
+    const macdEl = document.getElementById("chart-macd");
+    const kdEl = document.getElementById("chart-kd");
+    const fallback = document.getElementById("chart-fallback");
+    if (!priceEl || !macdEl || !kdEl) return;
+
+    if (typeof LightweightCharts === "undefined") {
+      fallback.textContent = "圖表元件載入失敗，請確認網路後重新整理頁面。";
+      fallback.classList.remove("hidden");
+      return;
+    }
+
+    try {
+      const hist = d.history.slice(-90);
+      const start = d.history.length - hist.length;
+      const s = d.series || {};
+      const slc = (arr) => (arr || []).slice(start);
+      const toLine = (arr) =>
+        arr
+          .map((v, i) => (v == null ? null : { time: hist[i].date, value: v }))
+          .filter(Boolean);
+
+      const base = {
+        layout: { background: { color: "#182433" }, textColor: "#93a4b8", fontSize: 11 },
+        grid: { vertLines: { color: "#22324a" }, horzLines: { color: "#22324a" } },
+        rightPriceScale: { borderColor: "#2c3e54" },
+        timeScale: { borderColor: "#2c3e54", timeVisible: false },
+      };
+      const lineOpts = (color) => ({
+        color,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+
+      // 價格圖：K 線 + 均線 + 成交量
+      const pc = LightweightCharts.createChart(priceEl, {
+        ...base,
+        width: priceEl.clientWidth,
+        height: 260,
+      });
+      const candle = pc.addCandlestickSeries({
+        upColor: "#e23b3b",
+        downColor: "#1aa251",
+        borderVisible: false,
+        wickUpColor: "#e23b3b",
+        wickDownColor: "#1aa251",
+      });
+      candle.setData(
+        hist.map((h) => ({
+          time: h.date,
+          open: h.open,
+          high: h.high,
+          low: h.low,
+          close: h.close,
+        }))
+      );
+      [["ma5", "#f4b740"], ["ma10", "#5fa8e0"], ["ma20", "#c98bff"]].forEach(
+        ([key, color]) => {
+          pc.addLineSeries(lineOpts(color)).setData(toLine(slc(s[key])));
+        }
+      );
+      const vol = pc.addHistogramSeries({
+        priceScaleId: "",
+        priceFormat: { type: "volume" },
+        priceLineVisible: false,
+      });
+      vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      vol.setData(
+        hist.map((h) => ({
+          time: h.date,
+          value: h.volume,
+          color: h.close >= h.open ? "rgba(226,59,59,0.45)" : "rgba(26,162,81,0.45)",
+        }))
+      );
+
+      // MACD 圖
+      const mc = LightweightCharts.createChart(macdEl, {
+        ...base,
+        width: macdEl.clientWidth,
+        height: 150,
+      });
+      const mh = mc.addHistogramSeries({ priceLineVisible: false });
+      mh.setData(
+        slc(s.macd_hist)
+          .map((v, i) =>
+            v == null
+              ? null
+              : { time: hist[i].date, value: v, color: v >= 0 ? "#e23b3b" : "#1aa251" }
+          )
+          .filter(Boolean)
+      );
+      mc.addLineSeries(lineOpts("#f4b740")).setData(toLine(slc(s.macd_dif)));
+      mc.addLineSeries(lineOpts("#5fa8e0")).setData(toLine(slc(s.macd_signal)));
+
+      // KD 圖
+      const kc = LightweightCharts.createChart(kdEl, {
+        ...base,
+        width: kdEl.clientWidth,
+        height: 150,
+      });
+      kc.addLineSeries(lineOpts("#f4b740")).setData(toLine(slc(s.kd_k)));
+      kc.addLineSeries(lineOpts("#5fa8e0")).setData(toLine(slc(s.kd_d)));
+
+      chartInstances = [pc, mc, kc];
+      chartInstances.forEach((c) => c.timeScale().fitContent());
+
+      // 三張圖的時間軸連動
+      let syncing = false;
+      chartInstances.forEach((src) => {
+        src.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          if (syncing || !range) return;
+          syncing = true;
+          chartInstances.forEach((t) => {
+            if (t !== src) t.timeScale().setVisibleLogicalRange(range);
+          });
+          syncing = false;
+        });
+      });
+    } catch (err) {
+      console.error("技術線圖繪製失敗", err);
+      destroyCharts();
+      fallback.textContent = "技術線圖繪製失敗：" + err.message;
+      fallback.classList.remove("hidden");
     }
   }
 
@@ -407,6 +565,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function closeModal() {
     modal.classList.add("hidden");
+    destroyCharts();
   }
 
   // ---- 事件綁定 -----------------------------------------------------------

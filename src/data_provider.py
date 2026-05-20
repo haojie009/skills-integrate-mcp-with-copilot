@@ -3,8 +3,9 @@
 
 支援兩種模式（以環境變數 STOCK_DATA_MODE 切換）：
 
-  demo  （預設）— 內建一組可重現的示範資料，無需網路即可完整展示分析流程。
-  live  — 透過證交所公開 API 抓取真實價量與基本面資料。
+  demo  — 內建一組可重現的示範資料，無需網路即可完整展示分析流程。
+  live  — 抓取真實行情：價量歷史取自 Yahoo Finance、本益比等基本面取自
+          證交所 OpenAPI。EPS 成長率、ROE、新聞不在免費來源中，會留白。
 
 ⚠️ demo 模式的價量、基本面與新聞皆為「模擬資料」，僅供功能展示，
    不代表任何真實個股現況，切勿作為交易依據。
@@ -14,7 +15,8 @@ from __future__ import annotations
 
 import os
 import random
-from datetime import date, timedelta
+import time
+from datetime import date, datetime, timedelta, timezone
 
 # 分析所需的歷史交易日數
 HISTORY_DAYS = 160
@@ -251,71 +253,21 @@ def _load_demo():
 
 
 # ---------------------------------------------------------------------------
-# live 模式：證交所公開 API
+# live 模式：即時行情
 # ---------------------------------------------------------------------------
-# 注意：本服務若部署在有網路限制的環境（例如 Claude Code 雲端沙箱），
-# openapi.twse.com.tw 可能不在允許清單中而失敗，此時會自動退回 demo 模式。
+# 價量歷史取自 Yahoo Finance（每檔一次請求，較不易觸發流量限制）；
+# 本益比／淨值比／殖利率取自證交所 OpenAPI。
+# EPS 成長率、ROE 與新聞不在免費來源中，live 模式下會留白。
+# 任一個股抓取失敗會略過該檔；全部失敗則整體退回 demo 模式。
 
-_TWSE_DAILY = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+_YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 _TWSE_PERATIO = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL"
-
-
-def _fetch_live_history(code, months=8):
-    """以證交所 STOCK_DAY API 抓取近數月日 K 線。"""
-    import requests
-
-    history = []
-    cursor = date(2026, 5, 1)
-    for _ in range(months):
-        params = {
-            "response": "json",
-            "date": cursor.strftime("%Y%m%d"),
-            "stockNo": code,
-        }
-        resp = requests.get(_TWSE_DAILY, params=params, timeout=15)
-        resp.raise_for_status()
-        payload = resp.json()
-        for row in payload.get("data", []):
-            # row: [日期, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌價差, 成交筆數]
-            try:
-                y, m, d = row[0].split("/")
-                iso = f"{int(y) + 1911:04d}-{int(m):02d}-{int(d):02d}"
-                history.append({
-                    "date": iso,
-                    "open": float(row[3].replace(",", "")),
-                    "high": float(row[4].replace(",", "")),
-                    "low": float(row[5].replace(",", "")),
-                    "close": float(row[6].replace(",", "")),
-                    "volume": int(float(row[1].replace(",", "")) / 1000),
-                })
-            except (ValueError, IndexError):
-                continue
-        # 往前一個月
-        cursor = (cursor.replace(day=1) - timedelta(days=1)).replace(day=1)
-
-    history.sort(key=lambda r: r["date"])
-    return history[-HISTORY_DAYS:]
-
-
-def _fetch_live_fundamentals():
-    """抓取全市場本益比／淨值比／殖利率。"""
-    import requests
-
-    resp = requests.get(_TWSE_PERATIO, timeout=15)
-    resp.raise_for_status()
-    result = {}
-    for row in resp.json():
-        code = row.get("Code")
-        if not code:
-            continue
-        result[code] = {
-            "pe": _safe_float(row.get("PEratio")),
-            "pb": _safe_float(row.get("PBratio")),
-            "yield_pct": _safe_float(row.get("DividendYield")),
-            "eps_growth": None,
-            "roe": None,
-        }
-    return result
+_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+    )
+}
 
 
 def _safe_float(value):
@@ -325,32 +277,104 @@ def _safe_float(value):
         return None
 
 
+def _parse_yahoo_chart(payload):
+    """把 Yahoo chart API 的 JSON 解析成 OHLCV 歷史（由舊到新）。"""
+    result = payload["chart"]["result"][0]
+    timestamps = result["timestamp"]
+    quote = result["indicators"]["quote"][0]
+    opens, highs = quote["open"], quote["high"]
+    lows, closes, volumes = quote["low"], quote["close"], quote["volume"]
+
+    history = []
+    for i, ts in enumerate(timestamps):
+        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
+        if None in (o, h, l, c):  # Yahoo 偶有缺值，略過該日
+            continue
+        history.append({
+            "date": datetime.fromtimestamp(ts, timezone.utc).date().isoformat(),
+            "open": round(o, 2),
+            "high": round(h, 2),
+            "low": round(l, 2),
+            "close": round(c, 2),
+            "volume": int((volumes[i] or 0) / 1000),  # 股 → 張
+        })
+    return history
+
+
+def _fetch_yahoo_history(code):
+    """從 Yahoo Finance 抓單一上市個股近一年的日 K 線。"""
+    import requests
+
+    url = _YAHOO_CHART.format(symbol=f"{code}.TW")
+    resp = requests.get(
+        url,
+        params={"range": "1y", "interval": "1d"},
+        headers=_HTTP_HEADERS,
+        timeout=12,
+    )
+    resp.raise_for_status()
+    return _parse_yahoo_chart(resp.json())[-HISTORY_DAYS:]
+
+
+def _parse_twse_fundamentals(rows):
+    """把證交所 BWIBBU_ALL 的資料整理成 {代號: 基本面} 字典。"""
+    result = {}
+    for row in rows:
+        code = (row.get("Code") or row.get("證券代號") or "").strip()
+        if not code:
+            continue
+        result[code] = {
+            "pe": _safe_float(row.get("PEratio") or row.get("本益比")),
+            "pb": _safe_float(row.get("PBratio") or row.get("股價淨值比")),
+            "yield_pct": _safe_float(row.get("DividendYield") or row.get("殖利率")),
+            "eps_growth": None,
+            "roe": None,
+        }
+    return result
+
+
+def _fetch_twse_fundamentals():
+    """抓取全市場本益比／淨值比／殖利率。"""
+    import requests
+
+    resp = requests.get(_TWSE_PERATIO, headers=_HTTP_HEADERS, timeout=12)
+    resp.raise_for_status()
+    return _parse_twse_fundamentals(resp.json())
+
+
 def _load_live():
-    """live 模式：抓真實資料，任何個股失敗即退回該檔的 demo 資料。"""
+    """live 模式：抓真實行情，回傳成功抓到的個股清單（可能少於完整檔數）。"""
     fundamentals = {}
     try:
-        fundamentals = _fetch_live_fundamentals()
-    except Exception as exc:  # noqa: BLE001 - 網路/解析失敗都退回 demo
-        print(f"[data_provider] 基本面抓取失敗，改用 demo：{exc}")
+        fundamentals = _fetch_twse_fundamentals()
+    except Exception as exc:  # noqa: BLE001 - 失敗時本益比等欄位留白即可
+        print(f"[data_provider] 基本面抓取失敗，本益比等欄位留白：{exc}")
 
     stocks = []
     for profile in _DEMO_PROFILES:
         code = profile["code"]
         try:
-            history = _fetch_live_history(code)
-            if len(history) < 60:
-                raise ValueError("歷史資料不足")
+            history = _fetch_yahoo_history(code)
+            if len(history) < 70:
+                raise ValueError(f"歷史資料不足（{len(history)} 筆）")
+            fund = fundamentals.get(code) or {}
             stocks.append({
                 "code": code,
                 "name": profile["name"],
                 "sector": profile["sector"],
-                "fundamentals": fundamentals.get(code) or dict(profile["fundamentals"]),
+                "fundamentals": {
+                    "pe": fund.get("pe"),
+                    "pb": fund.get("pb"),
+                    "yield_pct": fund.get("yield_pct"),
+                    "eps_growth": None,
+                    "roe": None,
+                },
                 "news": [],  # 真實新聞需另接新聞 API
                 "history": history,
             })
+            time.sleep(0.3)  # 對 Yahoo 客氣，降低被限流機率
         except Exception as exc:  # noqa: BLE001
-            print(f"[data_provider] {code} live 抓取失敗，改用 demo：{exc}")
-            stocks.append(_build_demo_stock(profile))
+            print(f"[data_provider] {code}（{profile['name']}）live 抓取失敗，略過：{exc}")
     return stocks
 
 
@@ -358,15 +382,27 @@ def _load_live():
 # 對外介面
 # ---------------------------------------------------------------------------
 
+_actual_source = "demo"
+
+
 def load_stocks():
-    """載入所有個股資料。回傳 list[dict]。"""
+    """載入所有個股資料。live 模式失敗會自動退回 demo。回傳 list[dict]。"""
+    global _actual_source
     if DATA_MODE == "live":
         try:
-            return _load_live()
+            stocks = _load_live()
         except Exception as exc:  # noqa: BLE001
-            print(f"[data_provider] live 模式失敗，全面退回 demo：{exc}")
+            print(f"[data_provider] live 模式整體失敗：{exc}")
+            stocks = []
+        if stocks:
+            _actual_source = "live"
+            return stocks
+        print("[data_provider] live 模式未取得任何資料，退回 demo。")
+    _actual_source = "demo"
     return _load_demo()
 
 
 def data_source_label():
-    return "證交所即時資料 (live)" if DATA_MODE == "live" else "內建示範資料 (demo)"
+    if _actual_source == "live":
+        return "即時行情 Yahoo Finance／證交所 (live)"
+    return "內建示範資料 (demo)"

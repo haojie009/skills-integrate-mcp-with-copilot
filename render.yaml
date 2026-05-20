@@ -20,9 +20,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      # demo＝內建示範資料（免網路）；改成 live 可改抓證交所即時資料
+      # live＝抓真實行情（Yahoo Finance／證交所）；改成 demo 用內建示範資料
       - key: STOCK_DATA_MODE
-        value: demo
+        value: live
       # AI 多代理分析所需的 Claude 金鑰；sync:false 代表值要在 Render
       # 服務的 Environment 分頁手動填入，不會寫進此檔（避免外洩）
       - key: ANTHROPIC_API_KEY
