@@ -80,6 +80,7 @@ STOCK_DATA_MODE=demo uvicorn app:app --app-dir src
 | 方法 | 路徑 | 說明 |
 | ---- | ---- | ---- |
 | GET  | `/api/screener?limit=200` | 全市場當沖選股排行 |
+| GET  | `/api/categories` | 成交量排行與熱門題材分類 |
 | GET  | `/api/stock/{code}?name=` | 單一個股完整分析 |
 | GET  | `/api/ai-analysis/{code}` | Claude 多代理 AI 分析 |
 | GET  | `/api/health` | 服務健康檢查 |

@@ -14,26 +14,46 @@
 
     <div id="disclaimer" class="disclaimer">載入中…</div>
 
-    <main>
-      <section class="controls">
-        <div class="sort-toggle">
-          <button class="sort-btn active" data-sort="score">當沖適合度</button>
-          <button class="sort-btn" data-sort="amplitude_pct">振幅</button>
-          <button class="sort-btn" data-sort="change_pct">漲幅</button>
-          <button class="sort-btn" data-sort="turnover_yi">成交金額</button>
-        </div>
-        <div class="meta">
-          <span id="data-source"></span>
-          <button id="refresh-btn" title="重新掃描">↻ 更新</button>
-        </div>
-      </section>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="screener">當沖選股</button>
+      <button class="tab-btn" data-tab="categories">個股分類</button>
+    </nav>
 
-      <section id="screener">
-        <h3 id="list-title">當沖適合度排行</h3>
-        <div id="list" class="screener-list">
-          <p class="loading">掃描全市場中…</p>
-        </div>
-      </section>
+    <main>
+      <div id="tab-screener">
+        <section class="controls">
+          <div class="sort-toggle">
+            <button class="sort-btn active" data-sort="score">當沖適合度</button>
+            <button class="sort-btn" data-sort="amplitude_pct">振幅</button>
+            <button class="sort-btn" data-sort="change_pct">漲幅</button>
+            <button class="sort-btn" data-sort="turnover_yi">成交金額</button>
+          </div>
+          <div class="meta">
+            <span id="data-source"></span>
+            <button id="refresh-btn" title="重新掃描">↻ 更新</button>
+          </div>
+        </section>
+
+        <section id="screener">
+          <h3 id="list-title">當沖適合度排行</h3>
+          <div id="list" class="screener-list">
+            <p class="loading">掃描全市場中…</p>
+          </div>
+        </section>
+      </div>
+
+      <div id="tab-categories" class="hidden">
+        <section id="categories">
+          <h3>成交量排行（當日成交張數）</h3>
+          <div id="volume-list" class="screener-list">
+            <p class="loading">載入中…</p>
+          </div>
+          <h3 style="margin-top:24px">熱門題材（依成分股平均漲跌幅）</h3>
+          <div id="theme-list">
+            <p class="loading">載入中…</p>
+          </div>
+        </section>
+      </div>
     </main>
 
     <div id="modal" class="modal hidden">

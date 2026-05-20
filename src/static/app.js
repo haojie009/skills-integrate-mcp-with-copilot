@@ -8,6 +8,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let screenerData = [];
   let currentSort = "score";
+  let categoriesLoaded = false;
 
   // ---- 工具函式 -----------------------------------------------------------
   const fmtPrice = (n) => Number(n).toLocaleString("zh-Hant", { minimumFractionDigits: 2 });
@@ -150,6 +151,77 @@ document.addEventListener("DOMContentLoaded", () => {
       renderError(
         `掃描失敗：${err.message}。免費主機可能仍在喚醒，請按下方按鈕重試。`
       );
+      console.error(err);
+    }
+  }
+
+  // ---- 個股分類 -----------------------------------------------------------
+  function volRowHTML(s) {
+    return `
+      <div class="srow" data-code="${s.code}" data-name="${esc(s.name)}">
+        <span class="srank">${s.rank}</span>
+        <div class="sinfo">
+          <div class="sname">${esc(s.name)} <span class="scode">${s.code}</span></div>
+          <div class="smetrics">
+            <span>現價 <b>${fmtPrice(s.close)}</b></span>
+            <span class="${dirClass(s.change_pct)}">${fmtPct(s.change_pct)}</span>
+          </div>
+        </div>
+        <div class="sscore">
+          <div class="sscore-num" style="font-size:1.05rem">${s.volume_lots.toLocaleString("zh-Hant")}</div>
+          <div class="sscore-lbl">張</div>
+        </div>
+      </div>`;
+  }
+
+  function themeCardHTML(t, idx) {
+    const members = t.members
+      .map(
+        (m) => `
+        <div class="tmember" data-code="${m.code}" data-name="${esc(m.name)}">
+          <span>${esc(m.name)} <span class="scode">${m.code}</span></span>
+          <span class="${dirClass(m.change_pct)}">${fmtPct(m.change_pct)}</span>
+        </div>`
+      )
+      .join("");
+    return `
+      <div class="theme-card">
+        <div class="theme-head" data-idx="${idx}">
+          <div class="theme-info">
+            <div class="theme-name">${esc(t.name)}
+              <span class="${dirClass(t.avg_change)}">平均 ${fmtPct(t.avg_change)}</span></div>
+            <div class="theme-sub">▲ ${t.up_count}/${t.member_count} 家上漲　·　成交 ${t.turnover_yi} 億　·　領漲 ${esc(t.leader.name)} ${fmtPct(t.leader.change_pct)}</div>
+          </div>
+          <span class="theme-toggle">▾</span>
+        </div>
+        <div class="theme-members hidden" id="theme-m-${idx}">${members}</div>
+      </div>`;
+  }
+
+  async function loadCategories() {
+    const volEl = document.getElementById("volume-list");
+    const themeEl = document.getElementById("theme-list");
+    volEl.innerHTML = '<p class="loading">載入中…</p>';
+    themeEl.innerHTML = "";
+    try {
+      const data = await fetchJSON("/api/categories", {}, { attempts: 3 });
+      categoriesLoaded = true;
+      volEl.innerHTML = data.volume_ranking.map(volRowHTML).join("");
+      volEl.querySelectorAll(".srow").forEach((row) => {
+        row.addEventListener("click", () => openDetail(row.dataset.code, row.dataset.name));
+      });
+      themeEl.innerHTML = data.themes.map((t, i) => themeCardHTML(t, i)).join("");
+      themeEl.querySelectorAll(".theme-head").forEach((h) => {
+        h.addEventListener("click", () => {
+          document.getElementById("theme-m-" + h.dataset.idx).classList.toggle("hidden");
+          h.querySelector(".theme-toggle").classList.toggle("open");
+        });
+      });
+      themeEl.querySelectorAll(".tmember").forEach((m) => {
+        m.addEventListener("click", () => openDetail(m.dataset.code, m.dataset.name));
+      });
+    } catch (err) {
+      volEl.innerHTML = `<p class="loading">分類載入失敗：${err.message}</p>`;
       console.error(err);
     }
   }
@@ -556,6 +628,17 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ---- 事件綁定 -----------------------------------------------------------
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.dataset.tab;
+      document.getElementById("tab-screener").classList.toggle("hidden", tab !== "screener");
+      document.getElementById("tab-categories").classList.toggle("hidden", tab !== "categories");
+      if (tab === "categories" && !categoriesLoaded) loadCategories();
+    });
+  });
+
   document.querySelectorAll(".sort-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".sort-btn").forEach((b) => b.classList.remove("active"));
@@ -573,6 +656,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       console.warn("refresh 失敗，仍重新掃描", e);
     }
+    categoriesLoaded = false;
     await loadScreener();
     btn.disabled = false;
   });

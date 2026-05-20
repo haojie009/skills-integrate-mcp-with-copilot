@@ -27,6 +27,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 import ai_advisor
 import analysis
 import data_provider
+import themes
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -104,6 +105,17 @@ def screener(limit: int = 200):
         "disclaimer": DISCLAIMER,
         "total": len(rows),
         "stocks": rows[: max(1, limit)],
+    }
+
+
+@app.get("/api/categories")
+def categories():
+    """個股分類：全市場成交量排行與熱門題材。"""
+    rows = _get_screener()
+    return {
+        "data_source": data_provider.data_source_label(),
+        "disclaimer": DISCLAIMER,
+        **themes.build_categories(rows),
     }
 
 
