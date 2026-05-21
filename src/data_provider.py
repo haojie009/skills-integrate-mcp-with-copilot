@@ -499,7 +499,7 @@ def _fetch_yahoo_quote(code):
         url,
         params={"range": "7d", "interval": "1d"},
         headers=_HTTP_HEADERS,
-        timeout=10,
+        timeout=8,
     )
     resp.raise_for_status()
     hist = _parse_yahoo_chart(resp.json())
@@ -529,7 +529,7 @@ def _load_yahoo_screener():
         return {"code": code, "name": name, **quote} if quote else None
 
     rows = []
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=16) as pool:
         for result in pool.map(task, _UNIVERSE):
             if result:
                 rows.append(result)

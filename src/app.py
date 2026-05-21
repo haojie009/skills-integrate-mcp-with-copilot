@@ -157,10 +157,15 @@ def ai_analysis(code: str, name: str = ""):
 
 @app.post("/api/refresh")
 def refresh():
-    """清空快取，下次請求會重新掃描與分析。"""
+    """清空快取，並在背景重新掃描。"""
     global _screener_cache
     _screener_cache = None
     _detail_cache.clear()
     ai_advisor.clear_cache()
     data_provider.reset_caches()
+    threading.Thread(target=_get_screener, daemon=True).start()
     return {"status": "refreshed"}
+
+
+# 啟動時即在背景預先載入選股清單，縮短使用者首次開啟的等待
+threading.Thread(target=_get_screener, daemon=True).start()

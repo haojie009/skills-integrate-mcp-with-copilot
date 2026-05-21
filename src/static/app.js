@@ -136,17 +136,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadScreener() {
     listEl.innerHTML =
-      '<p class="loading">掃描全市場中…<br><small>免費主機若處於休眠，首次喚醒約需 30–60 秒，請稍候</small></p>';
+      '<p class="loading">掃描全市場中…<br><small>首次載入需即時抓取 130+ 檔真實行情，約 30–90 秒，請稍候</small></p>';
     const onAttempt = (i, total) => {
       if (i > 1) {
-        listEl.innerHTML = `<p class="loading">伺服器喚醒中，重試 ${i}/${total}…<br><small>請勿關閉頁面</small></p>`;
+        listEl.innerHTML = `<p class="loading">仍在抓取真實行情，重試 ${i}/${total}…<br><small>請勿關閉頁面</small></p>`;
       }
     };
     try {
       const data = await fetchJSON(
         "/api/screener?limit=300",
         {},
-        { onAttempt, timeoutMs: 45000 }
+        { onAttempt, timeoutMs: 60000, attempts: 5 }
       );
       disclaimerEl.textContent = "⚠️ " + data.disclaimer;
       dataSourceEl.textContent = "資料來源：" + data.data_source;
