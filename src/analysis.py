@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 # ---------------------------------------------------------------------------
 # 技術指標（純 Python，不依賴 numpy / pandas）
 # ---------------------------------------------------------------------------
@@ -844,6 +846,89 @@ def screen_score(row):
     }
 
 
+# ---------------------------------------------------------------------------
+# 多時間框架：週線趨勢
+# ---------------------------------------------------------------------------
+
+
+def _to_weekly(history):
+    """把日 K 聚合成週 K（依 ISO 週）。"""
+    weeks = {}
+    order = []
+    for bar in history:
+        iso = date.fromisoformat(bar["date"]).isocalendar()
+        key = (iso[0], iso[1])
+        if key not in weeks:
+            weeks[key] = {"high": bar["high"], "low": bar["low"], "close": bar["close"]}
+            order.append(key)
+        else:
+            wk = weeks[key]
+            wk["high"] = max(wk["high"], bar["high"])
+            wk["low"] = min(wk["low"], bar["low"])
+            wk["close"] = bar["close"]
+    return [weeks[k] for k in order]
+
+
+def weekly_trend(history):
+    """以週線均線判斷中期趨勢（多頭／空頭／盤整）。"""
+    weekly = _to_weekly(history)
+    closes = [w["close"] for w in weekly]
+    if len(closes) < 11:
+        return {"trend": "資料不足", "ma5": None, "ma10": None, "last": None}
+    ma5 = sma(closes, 5)
+    ma10 = sma(closes, 10)
+    last = closes[-1]
+    if last >= ma5 >= ma10:
+        trend = "多頭"
+    elif last <= ma5 <= ma10:
+        trend = "空頭"
+    else:
+        trend = "盤整"
+    return {"trend": trend, "ma5": _r(ma5), "ma10": _r(ma10), "last": _r(last)}
+
+
+# ---------------------------------------------------------------------------
+# 歷史回測：驗證隔日沖進場規則
+# ---------------------------------------------------------------------------
+
+
+def backtest(history):
+    """回測簡易隔日沖規則：訊號日收盤進場、隔日收盤出場。
+
+    進場條件：收盤站上 20MA、MACD 紅柱且翻揚、RSI 在 50~78。
+    """
+    closes = [b["close"] for b in history]
+    if len(closes) < 45:
+        return None
+    trades = []
+    for i in range(35, len(closes) - 1):
+        window = closes[: i + 1]
+        ma20 = sma(window, 20)
+        rsi14 = rsi(window, 14)
+        macd_v = macd(window)
+        if ma20 is None or rsi14 is None or macd_v is None:
+            continue
+        bullish = (
+            window[-1] > ma20
+            and macd_v["hist"] > 0
+            and macd_v["hist"] > macd_v["hist_prev"]
+            and 50 <= rsi14 <= 78
+        )
+        if bullish:
+            trades.append((closes[i + 1] - closes[i]) / closes[i] * 100)
+    if not trades:
+        return {"trades": 0, "win_rate": None, "avg_return": None,
+                "best": None, "worst": None}
+    wins = sum(1 for r in trades if r > 0)
+    return {
+        "trades": len(trades),
+        "win_rate": round(wins / len(trades) * 100, 1),
+        "avg_return": round(sum(trades) / len(trades), 2),
+        "best": round(max(trades), 2),
+        "worst": round(min(trades), 2),
+    }
+
+
 def analyze_stock(stock):
     """對單一個股做完整分析，回傳含三面向、綜合評分與兩種策略計畫的結果。"""
     history = stock["history"]
@@ -852,6 +937,11 @@ def analyze_stock(stock):
     tech = technical_analysis(history)
     fund = fundamental_analysis(stock["fundamentals"])
     news = news_analysis(stock.get("news", []))
+    weekly = weekly_trend(history)
+    bt = backtest(history)
+
+    # 週線趨勢校正：中期多頭順勢加分、空頭逆勢扣分
+    wk_adj = {"多頭": 3.0, "空頭": -5.0}.get(weekly["trend"], 0.0)
 
     scores = {}
     plans = {}
@@ -861,7 +951,7 @@ def analyze_stock(stock):
             + news["score"] * w["news"]
             + fund["score"] * w["fund"]
         )
-        composite = round(composite, 1)
+        composite = round(_clamp(composite + wk_adj), 1)
         scores[strategy] = composite
         plans[strategy] = build_trade_plan(
             strategy, composite, last_close, tech["volatility_pct"]
@@ -891,6 +981,8 @@ def analyze_stock(stock):
         "news": news["scored_news"],
         "fundamentals": stock["fundamentals"],
         "institutional": stock.get("institutional"),
+        "weekly": weekly,
+        "backtest": bt,
         "plans": plans,
         "history": history,
         "series": chart_series(history),

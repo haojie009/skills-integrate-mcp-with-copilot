@@ -306,6 +306,13 @@ document.addEventListener("DOMContentLoaded", () => {
         <span class="chg ${dirClass(d.change_pct)}">${fmtPct(d.change_pct)}</span></div>
 
       <div class="modal-section">
+        <h4>當日盤中走勢</h4>
+        <div class="chart-label">Yahoo 1 分線（約延遲 15–20 分，非逐筆即時）</div>
+        <div id="chart-intraday" class="chart-box small"></div>
+        <div id="intraday-fallback" class="chart-fallback hidden"></div>
+      </div>
+
+      <div class="modal-section">
         <h4>技術線圖（近 90 個交易日）</h4>
         <div class="chart-label">K 線　·　均線 <span style="color:#f4b740">MA5</span>
           <span style="color:#5fa8e0">MA10</span> <span style="color:#c98bff">MA20</span>　·　成交量</div>
@@ -357,6 +364,7 @@ document.addEventListener("DOMContentLoaded", () => {
           ${kv("ADX 趨勢強度", ind.dmi ? num(ind.dmi.adx, 0) : "—")}
           ${kv("+DI / -DI", ind.dmi ? num(ind.dmi.plus_di, 0) + " / " + num(ind.dmi.minus_di, 0) : "—")}
           ${kv("OBV 量能潮", obvText)}
+          ${kv("週線中期趨勢", d.weekly ? esc(d.weekly.trend) : "—")}
         </div>
       </div>
 
@@ -382,6 +390,21 @@ document.addEventListener("DOMContentLoaded", () => {
           ${kv("當日K線", d.pattern.text)}
         </div>
       </div>
+
+      ${
+        d.backtest && d.backtest.trades
+          ? `<div class="modal-section">
+        <h4>歷史回測（隔日沖訊號，近一年）</h4>
+        <div class="kv-grid">
+          ${kv("符合進場次數", d.backtest.trades + " 次")}
+          ${kv("隔日收紅勝率", d.backtest.win_rate + "%")}
+          ${kv("平均報酬", d.backtest.avg_return + "%")}
+          ${kv("最佳 / 最差", d.backtest.best + "% / " + d.backtest.worst + "%")}
+        </div>
+        <div class="plan-times"><div>回測規則：收盤站上 20MA、MACD 紅柱翻揚、RSI 50–78 時進場，隔日收盤出場 —— 僅供驗證參考。</div></div>
+      </div>`
+          : ""
+      }
 
       ${
         inst
@@ -436,6 +459,7 @@ document.addEventListener("DOMContentLoaded", () => {
       );
       modalBody.innerHTML = modalHTML(d);
       renderCharts(d);
+      renderIntraday(d.code);
       const aiBtn = document.getElementById("ai-run-btn");
       if (aiBtn) aiBtn.addEventListener("click", () => runAIAnalysis(d.code));
     } catch (err) {
@@ -589,6 +613,58 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("技術線圖繪製失敗", err);
       destroyCharts();
       fallback.textContent = "技術線圖繪製失敗：" + err.message;
+      fallback.classList.remove("hidden");
+    }
+  }
+
+  // ---- 當日盤中走勢 -------------------------------------------------------
+  async function renderIntraday(code) {
+    const el = document.getElementById("chart-intraday");
+    const fallback = document.getElementById("intraday-fallback");
+    if (!el) return;
+    try {
+      const d = await fetchJSON(
+        `/api/intraday/${code}`,
+        {},
+        { attempts: 2, timeoutMs: 15000 }
+      );
+      if (!d.points || d.points.length === 0) {
+        fallback.textContent = "盤中走勢暫無資料（非交易時段或來源無回應）。";
+        fallback.classList.remove("hidden");
+        return;
+      }
+      if (typeof LightweightCharts === "undefined") return;
+      const up = d.last != null && d.prev_close != null && d.last >= d.prev_close;
+      const color = up ? "#e23b3b" : "#1aa251";
+      const chart = LightweightCharts.createChart(el, {
+        layout: { background: { color: "#182433" }, textColor: "#93a4b8", fontSize: 11 },
+        grid: { vertLines: { color: "#22324a" }, horzLines: { color: "#22324a" } },
+        rightPriceScale: { borderColor: "#2c3e54" },
+        timeScale: { borderColor: "#2c3e54", timeVisible: true, secondsVisible: false },
+        width: el.clientWidth,
+        height: 160,
+      });
+      const series = chart.addAreaSeries({
+        lineColor: color,
+        topColor: up ? "rgba(226,59,59,0.28)" : "rgba(26,162,81,0.28)",
+        bottomColor: "rgba(0,0,0,0)",
+        lineWidth: 2,
+        priceLineVisible: false,
+      });
+      series.setData(d.points.map((p) => ({ time: p.t, value: p.price })));
+      if (d.prev_close != null) {
+        series.createPriceLine({
+          price: d.prev_close,
+          color: "#93a4b8",
+          lineWidth: 1,
+          lineStyle: 2,
+          title: "昨收",
+        });
+      }
+      chart.timeScale().fitContent();
+      chartInstances.push(chart);
+    } catch (err) {
+      fallback.textContent = "盤中走勢載入失敗：" + err.message;
       fallback.classList.remove("hidden");
     }
   }

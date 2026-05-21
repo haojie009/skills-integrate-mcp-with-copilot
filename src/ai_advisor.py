@@ -38,8 +38,9 @@ class AIAnalysis(BaseModel):
 
 
 _SYSTEM_PROMPT = """你是「AI 台股短線決策系統」，運作方式參考 TradingAgents 多代理框架。
-你會收到一檔台股的量化分析資料（技術面、基本面、消息面、三大法人買賣超，
-以及規則式買賣計畫），請依序扮演以下四個角色，完成一份「當沖／隔日沖」的短線交易分析：
+你會收到一檔台股的量化分析資料（技術面、基本面、消息面、三大法人買賣超、
+週線中期趨勢、近一年歷史回測，以及規則式買賣計畫），請依序扮演以下四個角色，
+完成一份「當沖／隔日沖」的短線交易分析：
 
 1. 看多研究員（bull_case）：從提供的資料中，盡力找出做多的理由與有利訊號。
 2. 看空研究員（bear_case）：從提供的資料中，盡力找出做空或避開的理由與風險訊號。
@@ -98,6 +99,19 @@ def _build_user_prompt(stock: dict) -> str:
     else:
         inst_text = "（無三大法人資料）"
 
+    weekly = stock.get("weekly") or {}
+    weekly_text = f"週線中期趨勢：{weekly.get('trend', '—')}"
+
+    bt = stock.get("backtest") or {}
+    if bt.get("trades"):
+        bt_text = (
+            f"近一年回測（隔日沖訊號）：符合進場條件 {bt['trades']} 次，"
+            f"隔日收紅勝率 {bt['win_rate']}%，平均報酬 {bt['avg_return']}%，"
+            f"最佳 {bt['best']}%／最差 {bt['worst']}%"
+        )
+    else:
+        bt_text = "近一年回測：樣本不足，無法評估"
+
     return f"""個股：{stock['name']}（{stock['code']}）　產業：{stock['sector']}
 最新收盤：{stock['last_close']}　當日漲跌幅：{stock['change_pct']}%
 
@@ -128,6 +142,10 @@ ADX：{_fmt(dmi['adx'] if dmi else None)}（+DI {_fmt(dmi['plus_di'] if dmi else
 【三大法人買賣超（最近交易日，單位：張，正為買超、負為賣超）】
 {inst_text}
 
+【中期趨勢與歷史回測】
+{weekly_text}
+{bt_text}
+
 【規則式買賣計畫（系統量化規則自動產生，供你參考）】
 當沖：{day['action']}　進場 {day['entry_low']}~{day['entry_high']}　停利 {day['target']}　停損 {day['stop']}
 隔日沖：{overnight['action']}　進場 {overnight['entry_low']}~{overnight['entry_high']}　停利 {overnight['target']}　停損 {overnight['stop']}
@@ -141,7 +159,8 @@ def _call_claude(stock: dict) -> dict:
     client = anthropic.Anthropic()
     response = client.messages.parse(
         model=AI_MODEL,
-        max_tokens=4000,
+        max_tokens=8000,
+        thinking={"type": "adaptive"},  # 深度推理，提升判斷精準度
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_prompt(stock)}],
         output_format=AIAnalysis,

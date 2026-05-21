@@ -536,6 +536,56 @@ def _load_yahoo_screener():
     return rows
 
 
+def _fetch_yahoo_intraday(code):
+    """抓單一個股當日 1 分 K（Yahoo，約延遲 15–20 分）。"""
+    import requests
+
+    url = _YAHOO_CHART.format(symbol=f"{code}.TW")
+    resp = requests.get(
+        url,
+        params={"range": "1d", "interval": "1m"},
+        headers=_HTTP_HEADERS,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()["chart"]["result"][0]
+    meta = result.get("meta") or {}
+    timestamps = result.get("timestamp") or []
+    quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+
+    points = []
+    for i, ts in enumerate(timestamps):
+        price = closes[i] if i < len(closes) else None
+        if price is None:
+            continue
+        vol = volumes[i] if i < len(volumes) else None
+        points.append({
+            "t": int(ts),
+            "price": round(price, 2),
+            "volume": int((vol or 0) / 1000),
+        })
+
+    last = meta.get("regularMarketPrice")
+    prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+    return {
+        "code": code,
+        "last": round(last, 2) if last else (points[-1]["price"] if points else None),
+        "prev_close": round(prev, 2) if prev else None,
+        "points": points,
+    }
+
+
+def load_intraday(code):
+    """取單一個股當日盤中走勢；失敗回傳空資料（不讓服務崩潰）。"""
+    try:
+        return _fetch_yahoo_intraday(code)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[data_provider] {code} 盤中資料抓取失敗：{exc}")
+        return {"code": code, "last": None, "prev_close": None, "points": []}
+
+
 def _one_stock_fundamentals(code):
     """取單一個股基本面（共用全市場 BWIBBU_ALL 快取）。"""
     global _fund_cache, _fund_loaded

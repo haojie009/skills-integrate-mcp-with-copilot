@@ -146,6 +146,12 @@ def stock_detail(code: str, name: str = ""):
     return {"disclaimer": DISCLAIMER, **result}
 
 
+@app.get("/api/intraday/{code}")
+def intraday(code: str):
+    """個股當日盤中走勢（Yahoo 1 分 K，約延遲 15–20 分）。"""
+    return data_provider.load_intraday(code)
+
+
 @app.get("/api/ai-analysis/{code}")
 def ai_analysis(code: str, name: str = ""):
     """對指定個股執行 Claude 多代理 AI 分析（需設定 ANTHROPIC_API_KEY）。"""
