@@ -94,6 +94,7 @@ def health():
     rows = _get_screener()
     return {
         "status": "ok",
+        "commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:7],
         "mode": data_provider.DATA_MODE,
         "data_source": data_provider.data_source_label(),
         "screener_stocks": len(rows),
