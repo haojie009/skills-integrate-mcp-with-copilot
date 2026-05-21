@@ -202,6 +202,17 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
 .tag-chip.tag-down { background: rgba(26, 162, 81, 0.22); color: #6fdca0; }
 .tag-chip.tag-gold { background: rgba(244, 183, 64, 0.22); color: var(--gold); }
 .tag-chip.tag-mid { background: var(--panel-2); color: var(--muted); }
+.theme-tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 400;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: #9fb4ff;
+  border: 1px solid var(--line);
+  vertical-align: middle;
+}
 
 /* 首選股 */
 .top-pick {

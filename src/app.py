@@ -62,7 +62,9 @@ def _get_screener() -> list:
     if _screener_cache is None:
         scored = []
         for row in data_provider.load_screener():
-            scored.append({**row, **analysis.screen_score(row)})
+            item = {**row, **analysis.screen_score(row)}
+            item["theme"] = themes.theme_of(item["code"])
+            scored.append(item)
         scored.sort(key=lambda x: x["score"], reverse=True)
         for rank, item in enumerate(scored, start=1):
             item["rank"] = rank
@@ -89,9 +91,13 @@ def root():
 
 @app.get("/api/health")
 def health():
+    rows = _get_screener()
     return {
         "status": "ok",
+        "mode": data_provider.DATA_MODE,
         "data_source": data_provider.data_source_label(),
+        "screener_stocks": len(rows),
+        "live_error": data_provider.last_live_error(),
         "ai_enabled": ai_advisor.ai_enabled(),
     }
 

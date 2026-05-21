@@ -435,26 +435,34 @@ def _fetch_stock_day_all():
     return resp.json()
 
 
+def _first(row, *keys):
+    """依序取第一個有值的欄位（容忍中英文欄名差異）。"""
+    for key in keys:
+        if key in row and row[key] not in (None, ""):
+            return row[key]
+    return None
+
+
 def _parse_stock_day_all(rows):
     """整理 STOCK_DAY_ALL，只保留 4 碼一般股票（排除 ETF 等 0 開頭代號）。"""
     out = []
     for row in rows:
-        code = (row.get("Code") or "").strip()
+        code = str(_first(row, "Code", "證券代號") or "").strip()
         if len(code) != 4 or not code.isdigit() or code.startswith("0"):
             continue
-        close = _safe_float(row.get("ClosingPrice"))
+        close = _safe_float(_first(row, "ClosingPrice", "收盤價"))
         if close is None or close <= 0:
             continue
         out.append({
             "code": code,
-            "name": (row.get("Name") or "").strip() or code,
-            "open": _safe_float(row.get("OpeningPrice")),
-            "high": _safe_float(row.get("HighestPrice")),
-            "low": _safe_float(row.get("LowestPrice")),
+            "name": str(_first(row, "Name", "證券名稱") or code).strip() or code,
+            "open": _safe_float(_first(row, "OpeningPrice", "開盤價")),
+            "high": _safe_float(_first(row, "HighestPrice", "最高價")),
+            "low": _safe_float(_first(row, "LowestPrice", "最低價")),
             "close": close,
-            "change": _safe_float(row.get("Change")) or 0.0,
-            "volume_shares": _safe_float(row.get("TradeVolume")) or 0.0,
-            "turnover": _safe_float(row.get("TradeValue")) or 0.0,  # 成交金額（元）
+            "change": _safe_float(_first(row, "Change", "漲跌價差")) or 0.0,
+            "volume_shares": _safe_float(_first(row, "TradeVolume", "成交股數")) or 0.0,
+            "turnover": _safe_float(_first(row, "TradeValue", "成交金額")) or 0.0,
         })
     return out
 
@@ -505,16 +513,22 @@ def _demo_screener_rows():
 # ---------------------------------------------------------------------------
 
 _actual_source = "demo"
+_last_live_error = None
 
 
 def load_screener():
     """回傳全市場（live）或示範股（demo）的單日量價＋法人買賣超列表。"""
-    global _actual_source
+    global _actual_source, _last_live_error
     if DATA_MODE == "live":
+        rows = []
         try:
             rows = _parse_stock_day_all(_fetch_stock_day_all())
+            if not rows:
+                raise ValueError("STOCK_DAY_ALL 回應解析後無有效個股")
+            _last_live_error = None
         except Exception as exc:  # noqa: BLE001
-            print(f"[data_provider] STOCK_DAY_ALL 抓取失敗，退回 demo：{exc}")
+            _last_live_error = f"{type(exc).__name__}: {exc}"
+            print(f"[data_provider] STOCK_DAY_ALL 失敗，退回 demo：{exc}")
             rows = []
         if rows:
             t86 = {}
@@ -530,6 +544,11 @@ def load_screener():
             return rows
     _actual_source = "demo"
     return _demo_screener_rows()
+
+
+def last_live_error():
+    """回傳最近一次 live 抓取失敗的錯誤訊息（成功或未啟用則為 None）。"""
+    return _last_live_error
 
 
 def load_one_stock(code, name=""):

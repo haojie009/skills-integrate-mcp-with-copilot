@@ -93,7 +93,9 @@ document.addEventListener("DOMContentLoaded", () => {
       <div class="srow" data-code="${s.code}" data-name="${esc(s.name)}">
         <span class="srank">${rank}</span>
         <div class="sinfo">
-          <div class="sname">${esc(s.name)} <span class="scode">${s.code}</span> ${tags}</div>
+          <div class="sname">${esc(s.name)} <span class="scode">${s.code}</span>${
+            s.theme ? ` <span class="theme-tag">${esc(s.theme)}</span>` : ""
+          } ${tags}</div>
           <div class="smetrics">
             <span>現價 <b>${fmtPrice(s.close)}</b></span>
             <span class="${dirClass(s.change_pct)}">${fmtPct(s.change_pct)}</span>
@@ -141,7 +143,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
     try {
-      const data = await fetchJSON("/api/screener?limit=200", {}, { onAttempt });
+      const data = await fetchJSON("/api/screener?limit=300", {}, { onAttempt });
       disclaimerEl.textContent = "⚠️ " + data.disclaimer;
       dataSourceEl.textContent = "資料來源：" + data.data_source;
       screenerData = data.stocks || [];
