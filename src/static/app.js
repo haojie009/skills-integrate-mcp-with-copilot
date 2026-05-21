@@ -148,6 +148,18 @@ document.addEventListener("DOMContentLoaded", () => {
       dataSourceEl.textContent = "資料來源：" + data.data_source;
       screenerData = data.stocks || [];
       listTitle.textContent = `當沖適合度排行（顯示 ${screenerData.length} 檔，掃描 ${data.total} 檔）`;
+
+      const warnEl = document.getElementById("screener-warn");
+      if ((data.data_source || "").includes("demo")) {
+        const reason = data.live_error
+          ? `真實行情抓取失敗：${esc(data.live_error)}`
+          : "尚未取得真實行情（證交所資料來源無回應）";
+        warnEl.innerHTML =
+          `⚠️ 目前顯示「示範資料」（僅 ${screenerData.length} 檔模擬股），<b>非真實行情</b>。<br>${reason}`;
+        warnEl.classList.remove("hidden");
+      } else {
+        warnEl.classList.add("hidden");
+      }
       renderScreener();
     } catch (err) {
       renderError(

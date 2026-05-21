@@ -20,7 +20,8 @@ from datetime import date, datetime, timedelta, timezone
 # 分析所需的歷史交易日數
 HISTORY_DAYS = 160
 
-DATA_MODE = os.environ.get("STOCK_DATA_MODE", "demo").lower()
+# 預設 live（抓真實行情）；抓取失敗會自動退回 demo。
+DATA_MODE = os.environ.get("STOCK_DATA_MODE", "live").lower()
 
 
 # ---------------------------------------------------------------------------

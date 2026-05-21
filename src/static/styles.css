@@ -154,6 +154,17 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
   font-weight: 600;
 }
 
+.warn-box {
+  background: rgba(226, 59, 59, 0.12);
+  border: 1px solid rgba(226, 59, 59, 0.4);
+  color: #ffb0b0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.84rem;
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+
 /* 選股清單 */
 .screener-list { display: flex; flex-direction: column; gap: 8px; }
 .srow {

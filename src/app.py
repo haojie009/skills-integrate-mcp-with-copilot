@@ -108,6 +108,8 @@ def screener(limit: int = 200):
     rows = _get_screener()
     return {
         "data_source": data_provider.data_source_label(),
+        "mode": data_provider.DATA_MODE,
+        "live_error": data_provider.last_live_error(),
         "disclaimer": DISCLAIMER,
         "total": len(rows),
         "stocks": rows[: max(1, limit)],
