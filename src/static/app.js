@@ -143,7 +143,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
     try {
-      const data = await fetchJSON("/api/screener?limit=300", {}, { onAttempt });
+      const data = await fetchJSON(
+        "/api/screener?limit=300",
+        {},
+        { onAttempt, timeoutMs: 45000 }
+      );
       disclaimerEl.textContent = "⚠️ " + data.disclaimer;
       dataSourceEl.textContent = "資料來源：" + data.data_source;
       screenerData = data.stocks || [];

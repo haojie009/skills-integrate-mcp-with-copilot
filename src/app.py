@@ -18,6 +18,7 @@
 """
 
 import os
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -54,21 +55,28 @@ DISCLAIMER = (
 # 記憶體快取
 _screener_cache: list | None = None   # 排序後的當沖選股清單
 _detail_cache: dict = {}              # code -> analyze_stock 結果
+_screener_lock = threading.Lock()     # 避免冷啟動時多個請求重複載入
 
 
 def _get_screener() -> list:
-    """取得（並快取）依當沖適合度排序的個股清單。"""
+    """取得（並快取）依當沖適合度排序的個股清單。
+
+    載入需逐檔抓 Yahoo（數十秒），故加鎖避免並發重複載入；
+    切勿在健康檢查等需快速回應的路徑呼叫。
+    """
     global _screener_cache
     if _screener_cache is None:
-        scored = []
-        for row in data_provider.load_screener():
-            item = {**row, **analysis.screen_score(row)}
-            item["theme"] = themes.theme_of(item["code"])
-            scored.append(item)
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        for rank, item in enumerate(scored, start=1):
-            item["rank"] = rank
-        _screener_cache = scored
+        with _screener_lock:
+            if _screener_cache is None:  # 雙重檢查
+                scored = []
+                for row in data_provider.load_screener():
+                    item = {**row, **analysis.screen_score(row)}
+                    item["theme"] = themes.theme_of(item["code"])
+                    scored.append(item)
+                scored.sort(key=lambda x: x["score"], reverse=True)
+                for rank, item in enumerate(scored, start=1):
+                    item["rank"] = rank
+                _screener_cache = scored
     return _screener_cache
 
 
@@ -91,13 +99,14 @@ def root():
 
 @app.get("/api/health")
 def health():
-    rows = _get_screener()
+    """輕量健康檢查 — 必須立即回應，不可觸發選股載入（Render 健檢逾時 5 秒）。"""
     return {
         "status": "ok",
         "commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:7],
         "mode": data_provider.DATA_MODE,
         "data_source": data_provider.data_source_label(),
-        "screener_stocks": len(rows),
+        "screener_stocks": len(_screener_cache or []),
+        "screener_loaded": _screener_cache is not None,
         "live_error": data_provider.last_live_error(),
         "ai_enabled": ai_advisor.ai_enabled(),
     }
