@@ -77,7 +77,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function tagClass(tag) {
     if (tag === "弱勢" || tag === "法人賣超") return "tag-down";
-    if (tag === "小型爆發" || tag === "投信買超") return "tag-gold";
+    if (
+      tag === "小型爆發" ||
+      tag === "投信買超" ||
+      tag === "飆股訊號" ||
+      tag === "突破前高"
+    ) {
+      return "tag-gold";
+    }
     return "tag-up";
   }
 
@@ -101,6 +108,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <span class="${dirClass(s.change_pct)}">${fmtPct(s.change_pct)}</span>
             <span>振幅 ${s.amplitude_pct}%</span>
             <span>金額 ${s.turnover_yi} 億</span>
+            ${s.vol_ratio ? `<span>量增 ${s.vol_ratio} 倍</span>` : ""}
             ${inst}
           </div>
         </div>

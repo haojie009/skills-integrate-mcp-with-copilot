@@ -835,11 +835,29 @@ def screen_score(row):
         if (row.get("trust_lots") or 0) >= 500 and "投信買超" not in tags:
             tags.append("投信買超")
 
+    # 飆股雷達：大漲 ＋ 爆量 ＋ 突破前高
+    vol_ratio = row.get("vol_ratio") or 1.0
+    breakout = bool(row.get("breakout"))
+    hot_score = 0.0
+    if change_pct > 0:
+        hot_score = change_pct * 2.5 + min(vol_ratio, 5.0) * 6 + (18 if breakout else 0)
+    hot_score = round(_clamp(hot_score), 1)
+    if change_pct >= 4 and vol_ratio >= 1.8:
+        score += 8
+        tags.append("飆股訊號")
+    if breakout and change_pct > 0:
+        tags.append("突破前高")
+    if vol_ratio >= 2.5 and "爆量" not in tags:
+        tags.append("爆量")
+
     return {
         "score": round(_clamp(score), 1),
         "change_pct": round(change_pct, 2),
         "amplitude_pct": round(amplitude_pct, 2),
         "turnover_yi": round(turnover_yi, 2),
+        "vol_ratio": round(vol_ratio, 2),
+        "breakout": breakout,
+        "hot_score": hot_score,
         "inst_lots": inst_lots,
         "trust_lots": row.get("trust_lots"),
         "tags": tags,
