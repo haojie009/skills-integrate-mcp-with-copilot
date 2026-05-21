@@ -279,6 +279,28 @@ _HTTP_HEADERS = {
         "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
     )
 }
+# 證交所 OpenAPI 需明確要求 JSON，否則可能回傳 HTML 或空白
+_TWSE_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json, text/plain, */*",
+}
+
+
+def _twse_get_json(url, timeout=20):
+    """對證交所 OpenAPI 發 GET 並解析 JSON；非 JSON 時拋出含回應內容的錯誤。"""
+    import requests
+
+    resp = requests.get(url, headers=_TWSE_HEADERS, timeout=timeout)
+    resp.raise_for_status()
+    try:
+        return resp.json()
+    except ValueError as exc:
+        content_type = resp.headers.get("Content-Type", "?")
+        snippet = resp.text[:160].replace("\n", " ").strip()
+        raise ValueError(
+            f"非 JSON 回應 status={resp.status_code} type={content_type} "
+            f"len={len(resp.text)} body={snippet!r}"
+        ) from exc
 
 
 def _safe_float(value):
@@ -346,11 +368,7 @@ def _parse_twse_fundamentals(rows):
 
 def _fetch_twse_fundamentals():
     """抓取全市場本益比／淨值比／殖利率。"""
-    import requests
-
-    resp = requests.get(_TWSE_PERATIO, headers=_HTTP_HEADERS, timeout=12)
-    resp.raise_for_status()
-    return _parse_twse_fundamentals(resp.json())
+    return _parse_twse_fundamentals(_twse_get_json(_TWSE_PERATIO, timeout=15))
 
 
 # ---------------------------------------------------------------------------
@@ -372,11 +390,7 @@ _t86_loaded = False
 
 def _fetch_t86():
     """抓三大法人買賣超日報（一次請求取得全市場）。"""
-    import requests
-
-    resp = requests.get(_TWSE_T86, headers=_HTTP_HEADERS, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+    return _twse_get_json(_TWSE_T86, timeout=15)
 
 
 def _t86_value(row, *substrs):
@@ -429,11 +443,7 @@ def _one_stock_institutional(code):
 
 def _fetch_stock_day_all():
     """抓全上市個股最近交易日的單日 OHLCV（一次請求取得全市場）。"""
-    import requests
-
-    resp = requests.get(_TWSE_STOCK_DAY_ALL, headers=_HTTP_HEADERS, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
+    return _twse_get_json(_TWSE_STOCK_DAY_ALL)
 
 
 def _first(row, *keys):
@@ -446,6 +456,8 @@ def _first(row, *keys):
 
 def _parse_stock_day_all(rows):
     """整理 STOCK_DAY_ALL，只保留 4 碼一般股票（排除 ETF 等 0 開頭代號）。"""
+    if not isinstance(rows, list):
+        raise ValueError(f"STOCK_DAY_ALL 預期為陣列，實際為 {type(rows).__name__}")
     out = []
     for row in rows:
         code = str(_first(row, "Code", "證券代號") or "").strip()
