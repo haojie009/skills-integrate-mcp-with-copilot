@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 
 # 分析所需的歷史交易日數
@@ -372,11 +373,59 @@ def _fetch_twse_fundamentals():
 
 
 # ---------------------------------------------------------------------------
-# 全市場單日行情：證交所 STOCK_DAY_ALL（一次請求取得所有上市個股）
+# 全市場選股：Yahoo Finance
 # ---------------------------------------------------------------------------
+# 證交所封鎖雲端伺服器 IP，雲端一律抓不到；Yahoo 雲端可正常存取，
+# 但只能逐檔抓，故鎖定一份精選的高流動性個股清單（當沖該盯的標的）。
 
-_TWSE_STOCK_DAY_ALL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-_TWSE_T86 = "https://openapi.twse.com.tw/v1/fund/T86"  # 三大法人買賣超日報
+_TWSE_T86 = "https://openapi.twse.com.tw/v1/fund/T86"  # 三大法人（僅住家 IP 可用）
+
+# 精選高流動性個股（代號, 名稱）—— 當沖選股掃描範圍
+_UNIVERSE = [
+    ("2330", "台積電"), ("2317", "鴻海"), ("2454", "聯發科"), ("2308", "台達電"),
+    ("2382", "廣達"), ("2303", "聯電"), ("3711", "日月光投控"), ("2412", "中華電"),
+    ("3045", "台灣大"), ("4904", "遠傳"),
+    ("2881", "富邦金"), ("2882", "國泰金"), ("2891", "中信金"), ("2886", "兆豐金"),
+    ("2884", "玉山金"), ("2892", "第一金"), ("2885", "元大金"), ("2880", "華南金"),
+    ("2890", "永豐金"), ("2887", "台新金"), ("2883", "開發金"), ("2888", "新光金"),
+    ("2889", "國票金"), ("5880", "合庫金"), ("5871", "中租-KY"), ("2801", "彰銀"),
+    ("1216", "統一"), ("2912", "統一超"), ("1227", "佳格"), ("1229", "聯華"),
+    ("1210", "大成"), ("1722", "台肥"),
+    ("1301", "台塑"), ("1303", "南亞"), ("1326", "台化"), ("6505", "台塑化"),
+    ("1717", "長興"),
+    ("2002", "中鋼"), ("2014", "中鴻"), ("2027", "大成鋼"), ("1101", "台泥"),
+    ("1102", "亞泥"),
+    ("2603", "長榮"), ("2609", "陽明"), ("2615", "萬海"), ("2606", "裕民"),
+    ("5608", "四維航"), ("2618", "長榮航"), ("2610", "華航"),
+    ("3034", "聯詠"), ("2379", "瑞昱"), ("3443", "創意"), ("3035", "智原"),
+    ("8016", "矽創"), ("5269", "祥碩"), ("8299", "群聯"), ("3529", "力旺"),
+    ("6415", "矽力-KY"), ("3661", "世芯-KY"), ("6533", "晶心科"),
+    ("2449", "京元電子"), ("6147", "頎邦"), ("6239", "力成"), ("2408", "南亞科"),
+    ("3037", "欣興"), ("8046", "南電"), ("2368", "金像電"), ("3533", "嘉澤"),
+    ("4958", "臻鼎-KY"), ("3702", "大聯大"),
+    ("3231", "緯創"), ("2356", "英業達"), ("2376", "技嘉"), ("4938", "和碩"),
+    ("6669", "緯穎"), ("2357", "華碩"), ("2353", "宏碁"), ("2324", "仁寶"),
+    ("2345", "智邦"), ("2301", "光寶科"), ("6285", "啟碁"), ("2354", "鴻準"),
+    ("2347", "聯強"), ("2392", "正崴"),
+    ("3017", "奇鋐"), ("3324", "雙鴻"), ("6230", "超眾"),
+    ("2327", "國巨"), ("2492", "華新科"), ("3026", "禾伸堂"), ("2383", "台光電"),
+    ("3023", "信邦"), ("2421", "建準"), ("2393", "億光"),
+    ("2409", "友達"), ("3481", "群創"), ("6116", "彩晶"), ("3008", "大立光"),
+    ("3406", "玉晶光"), ("3019", "亞光"),
+    ("6770", "力積電"), ("5347", "世界先進"),
+    ("1503", "士電"), ("1519", "華城"), ("1513", "中興電"), ("1504", "東元"),
+    ("2371", "大同"),
+    ("2049", "上銀"), ("1590", "亞德客-KY"), ("2360", "致茂"), ("2395", "研華"),
+    ("2059", "川湖"),
+    ("2207", "和泰車"), ("2105", "正新"), ("1536", "和大"), ("2231", "為升"),
+    ("2227", "裕日車"),
+    ("1402", "遠東新"), ("1476", "儒鴻"), ("1477", "聚陽"), ("9910", "豐泰"),
+    ("9904", "寶成"), ("9921", "巨大"), ("9914", "美利達"),
+    ("2542", "興富發"), ("2548", "華固"), ("2545", "皇翔"), ("5522", "遠雄"),
+    ("2727", "王品"), ("2707", "晶華"), ("2731", "雄獅"), ("8454", "富邦媒"),
+    ("6446", "藥華藥"), ("1795", "美時"), ("4174", "浩鼎"), ("1762", "中化生"),
+    ("2474", "可成"), ("2634", "漢翔"), ("8033", "雷虎"), ("6121", "新普"),
+]
 
 _SECTOR_BY_CODE = {p["code"]: p["sector"] for p in _DEMO_PROFILES}
 _NAME_BY_CODE = {p["code"]: p["name"] for p in _DEMO_PROFILES}
@@ -441,43 +490,50 @@ def _one_stock_institutional(code):
     return _t86_cache.get(code)
 
 
-def _fetch_stock_day_all():
-    """抓全上市個股最近交易日的單日 OHLCV（一次請求取得全市場）。"""
-    return _twse_get_json(_TWSE_STOCK_DAY_ALL)
+def _fetch_yahoo_quote(code):
+    """抓單一個股最近數日日 K，回傳當日量價 dict（資料不足回 None）。"""
+    import requests
+
+    url = _YAHOO_CHART.format(symbol=f"{code}.TW")
+    resp = requests.get(
+        url,
+        params={"range": "7d", "interval": "1d"},
+        headers=_HTTP_HEADERS,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    hist = _parse_yahoo_chart(resp.json())
+    if len(hist) < 2:
+        return None
+    last, prev = hist[-1], hist[-2]
+    return {
+        "open": last["open"],
+        "high": last["high"],
+        "low": last["low"],
+        "close": last["close"],
+        "change": round(last["close"] - prev["close"], 2),
+        "volume_shares": last["volume"] * 1000,  # _parse_yahoo_chart 的 volume 為張
+        "turnover": last["close"] * last["volume"] * 1000,
+    }
 
 
-def _first(row, *keys):
-    """依序取第一個有值的欄位（容忍中英文欄名差異）。"""
-    for key in keys:
-        if key in row and row[key] not in (None, ""):
-            return row[key]
-    return None
+def _load_yahoo_screener():
+    """以多執行緒對精選清單逐檔抓 Yahoo 報價，組成選股清單。"""
 
+    def task(item):
+        code, name = item
+        try:
+            quote = _fetch_yahoo_quote(code)
+        except Exception:  # noqa: BLE001 - 單檔失敗略過即可
+            return None
+        return {"code": code, "name": name, **quote} if quote else None
 
-def _parse_stock_day_all(rows):
-    """整理 STOCK_DAY_ALL，只保留 4 碼一般股票（排除 ETF 等 0 開頭代號）。"""
-    if not isinstance(rows, list):
-        raise ValueError(f"STOCK_DAY_ALL 預期為陣列，實際為 {type(rows).__name__}")
-    out = []
-    for row in rows:
-        code = str(_first(row, "Code", "證券代號") or "").strip()
-        if len(code) != 4 or not code.isdigit() or code.startswith("0"):
-            continue
-        close = _safe_float(_first(row, "ClosingPrice", "收盤價"))
-        if close is None or close <= 0:
-            continue
-        out.append({
-            "code": code,
-            "name": str(_first(row, "Name", "證券名稱") or code).strip() or code,
-            "open": _safe_float(_first(row, "OpeningPrice", "開盤價")),
-            "high": _safe_float(_first(row, "HighestPrice", "最高價")),
-            "low": _safe_float(_first(row, "LowestPrice", "最低價")),
-            "close": close,
-            "change": _safe_float(_first(row, "Change", "漲跌價差")) or 0.0,
-            "volume_shares": _safe_float(_first(row, "TradeVolume", "成交股數")) or 0.0,
-            "turnover": _safe_float(_first(row, "TradeValue", "成交金額")) or 0.0,
-        })
-    return out
+    rows = []
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for result in pool.map(task, _UNIVERSE):
+            if result:
+                rows.append(result)
+    return rows
 
 
 def _one_stock_fundamentals(code):
@@ -530,25 +586,26 @@ _last_live_error = None
 
 
 def load_screener():
-    """回傳全市場（live）或示範股（demo）的單日量價＋法人買賣超列表。"""
+    """回傳精選個股（live）或示範股（demo）的單日量價列表。"""
     global _actual_source, _last_live_error
     if DATA_MODE == "live":
         rows = []
         try:
-            rows = _parse_stock_day_all(_fetch_stock_day_all())
-            if not rows:
-                raise ValueError("STOCK_DAY_ALL 回應解析後無有效個股")
+            rows = _load_yahoo_screener()
+            if len(rows) < 10:
+                raise ValueError(f"Yahoo 僅取得 {len(rows)} 檔，視為抓取失敗")
             _last_live_error = None
         except Exception as exc:  # noqa: BLE001
             _last_live_error = f"{type(exc).__name__}: {exc}"
-            print(f"[data_provider] STOCK_DAY_ALL 失敗，退回 demo：{exc}")
+            print(f"[data_provider] Yahoo 選股抓取失敗，退回 demo：{exc}")
             rows = []
         if rows:
+            # 嘗試補上三大法人（雲端通常抓不到，失敗就略過）
             t86 = {}
             try:
                 t86 = _parse_t86(_fetch_t86())
             except Exception as exc:  # noqa: BLE001
-                print(f"[data_provider] T86 法人資料抓取失敗，法人欄位留白：{exc}")
+                print(f"[data_provider] T86 法人資料未取得（雲端正常現象）：{exc}")
             for row in rows:
                 inst = t86.get(row["code"])
                 if inst:
@@ -604,5 +661,5 @@ def reset_caches():
 
 def data_source_label():
     if _actual_source == "live":
-        return "即時行情 證交所／Yahoo (live)"
+        return "即時行情 Yahoo Finance (live)"
     return "內建示範資料 (demo)"
