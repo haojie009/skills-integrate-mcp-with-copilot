@@ -19,6 +19,7 @@
 
 import os
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -57,6 +58,21 @@ _screener_cache: list | None = None   # 排序後的當沖選股清單
 _detail_cache: dict = {}              # code -> analyze_stock 結果
 _premarket_cache: dict = {}           # holdings|watch -> 盤前簡報
 _screener_lock = threading.Lock()     # 避免冷啟動時多個請求重複載入
+_markets_cache: dict = {"data": None, "fetched_at": 0.0}
+_MARKETS_TTL = 600                    # 全球盤勢快取 10 分鐘
+
+
+def _get_markets():
+    """取得（並快取）國際盤前指標,10 分鐘 TTL,避免每次都打 Yahoo。"""
+    now = time.time()
+    if _markets_cache["data"] is None or now - _markets_cache["fetched_at"] > _MARKETS_TTL:
+        try:
+            _markets_cache["data"] = data_provider.load_global_markets()
+            _markets_cache["fetched_at"] = now
+        except Exception:
+            if _markets_cache["data"] is None:
+                _markets_cache["data"] = []
+    return _markets_cache["data"]
 
 
 def _get_screener() -> list:
@@ -130,12 +146,20 @@ def screener(limit: int = 200):
 
 @app.get("/api/picks")
 def picks(top_n: int = 8):
-    """盤前精選當沖名單:從掃描結果挑出最值得當沖的前 N 檔,含進場/停損/停利計畫。"""
+    """盤前精選當沖名單:結合全球盤勢與昨日量價,挑出最值得當沖的前 N 檔。
+
+    每檔含進場/停損/停利計畫,並依族群套用全球隔夜變化(費半、ADR、油、債息...)
+    給出今日該優先做多/中性/保守/暫緩做多的方向。
+    """
     rows = _get_screener()
+    markets = _get_markets()
+    bias = analysis.global_bias(markets)
     return {
         "data_source": data_provider.data_source_label(),
         "disclaimer": DISCLAIMER,
-        "picks": analysis.daytrade_picks(rows, top_n=top_n),
+        "markets": markets,
+        "global_bias": bias,
+        "picks": analysis.daytrade_picks(rows, top_n=top_n, markets=markets),
     }
 
 
@@ -232,7 +256,7 @@ def premarket(holdings: str = "", watch: str = ""):
         if (s := _summarize_for_briefing(c, name_by_code.get(c, "")))
     ]
 
-    markets = data_provider.load_global_markets()
+    markets = _get_markets()
     cats = themes.build_categories(screener)
     briefing = ai_advisor.premarket_briefing(
         markets, cats["themes"], holdings_data, watch_data
@@ -256,6 +280,8 @@ def refresh():
     _screener_cache = None
     _detail_cache.clear()
     _premarket_cache.clear()
+    _markets_cache["data"] = None
+    _markets_cache["fetched_at"] = 0.0
     ai_advisor.clear_cache()
     data_provider.reset_caches()
     threading.Thread(target=_get_screener, daemon=True).start()

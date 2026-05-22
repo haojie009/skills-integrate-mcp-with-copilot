@@ -458,12 +458,71 @@ document.addEventListener("DOMContentLoaded", () => {
       <p style="font-size:0.76rem;color:var(--muted);margin-top:12px">⚠️ ${esc(d.disclaimer || "")}</p>`;
   }
 
+  // ---- 全球盤勢卡片 -------------------------------------------------------
+  function globalBiasHTML(bias, markets) {
+    if (!bias) return "";
+    const label = bias.label || "中性";
+    const score = bias.overall_score;
+    const cls =
+      label.includes("偏多") ? "bias-up" :
+      label.includes("偏空") ? "bias-down" : "bias-mid";
+    const signals = (bias.signals || [])
+      .map((s) => `<li>${esc(s)}</li>`)
+      .join("");
+    const groupBias = bias.group_bias || {};
+    const groupItems = Object.keys(groupBias)
+      .sort((a, b) => groupBias[b] - groupBias[a])
+      .map((g) => {
+        const v = groupBias[g];
+        const c = v > 0.3 ? "up" : v < -0.3 ? "down" : "neu";
+        const sign = v >= 0 ? "+" : "";
+        return `<span class="gb-tag ${c}">${esc(g)} ${sign}${v.toFixed(1)}</span>`;
+      })
+      .join("");
+    const tickers = (markets || [])
+      .map((m) => {
+        if (m.change_pct === null || m.change_pct === undefined) {
+          return `<div class="ticker"><span class="tn">${esc(m.name)}</span><span class="tv muted">—</span></div>`;
+        }
+        const c = m.change_pct >= 0 ? "up" : "down";
+        return `<div class="ticker"><span class="tn">${esc(m.name)}</span>
+          <span class="tv ${c}">${fmtPct(m.change_pct)}</span></div>`;
+      })
+      .join("");
+
+    return `
+      <div class="bias-card ${cls}">
+        <div class="bias-head">
+          <div class="bias-label">全球盤勢:<b>${esc(label)}</b>
+            <span class="bias-score">(${score >= 0 ? "+" : ""}${score})</span></div>
+        </div>
+        <div class="bias-hint">${esc(bias.action_hint || "")}</div>
+        ${signals ? `<ul class="bias-signals">${signals}</ul>` : ""}
+        ${groupItems ? `<div class="bias-groups"><span class="bgl">族群方向:</span>${groupItems}</div>` : ""}
+        <div class="bias-tickers">${tickers}</div>
+      </div>`;
+  }
+
   // ---- 盤前精選當沖名單 -------------------------------------------------
   function pickCardHTML(p, rank) {
     const op = p.open_plan || {};
     const tagsHTML = (p.tags || [])
       .map((t) => `<span class="stag">${esc(t)}</span>`)
       .join("");
+    const dirMap = {
+      "做多優先": "dir-strong",
+      "偏多可進": "dir-up",
+      "中性看技術": "dir-neu",
+      "保守做多": "dir-cau",
+      "暫緩做多": "dir-stop",
+    };
+    const dirBadgeCls = dirMap[p.direction] || "dir-neu";
+    const dirBadge = p.direction
+      ? `<div class="pick-dir ${dirBadgeCls}">
+          <b>${esc(p.direction)}</b>
+          ${p.direction_note ? `<span>${esc(p.direction_note)}</span>` : ""}
+        </div>`
+      : "";
     const reasonsHTML = (p.reasons || [])
       .map((r) => `<li>${esc(r)}</li>`)
       .join("");
@@ -491,6 +550,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         </div>
         <div class="pick-tags">${tagsHTML}</div>
+        ${dirBadge}
         <div class="pick-plan">
           <div class="pp-row"><b>進場</b>${esc(op.trigger || "—")}</div>
           <div class="pp-grid">
@@ -517,10 +577,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const picks = d.picks || [];
       if (!picks.length) {
         wrap.innerHTML =
+          globalBiasHTML(d.global_bias, d.markets) +
           '<p class="loading">目前沒有符合嚴格條件的當沖標的(可能成交清淡或市場動能不足)。</p>';
+        picksLoaded = true;
         return;
       }
-      wrap.innerHTML = picks.map((p, i) => pickCardHTML(p, i + 1)).join("");
+      const biasHTML = globalBiasHTML(d.global_bias, d.markets);
+      wrap.innerHTML = biasHTML + picks.map((p, i) => pickCardHTML(p, i + 1)).join("");
       wrap.querySelectorAll(".pick-card").forEach((card) => {
         card.addEventListener("click", (e) => {
           if (e.target.closest("a,button")) return;

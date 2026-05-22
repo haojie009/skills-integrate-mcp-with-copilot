@@ -865,6 +865,204 @@ def screen_score(row):
 
 
 # ---------------------------------------------------------------------------
+# 全球盤勢評估：把隔夜美股、費半、ADR、匯率、債息、油金翻譯成族群方向
+# ---------------------------------------------------------------------------
+
+
+# 題材 → 大族群(用於套用全球盤勢偏向)
+_THEME_TO_GROUP = {
+    "AI 伺服器": "半導體電子",
+    "晶圓代工": "半導體電子",
+    "IC 設計": "半導體電子",
+    "半導體封測": "半導體電子",
+    "散熱": "半導體電子",
+    "被動元件": "半導體電子",
+    "面板": "半導體電子",
+    "光學鏡頭": "半導體電子",
+    "機器人自動化": "半導體電子",
+    "金融": "金融",
+    "鋼鐵": "原物料",
+    "塑化": "原物料",
+    "水泥": "原物料",
+    "航運": "航運",
+    "航空": "航運",
+    "重電綠能": "傳產",
+    "汽車車電": "傳產",
+    "食品": "內需",
+    "紡織": "內需",
+    "電信": "內需",
+    "觀光餐飲": "內需",
+    "營建": "內需",
+    "生技醫療": "生技",
+    "軍工航太": "軍工",
+}
+
+
+def _quote_by_name(markets, name):
+    for m in (markets or []):
+        if m.get("name") == name and m.get("change_pct") is not None:
+            return m["change_pct"]
+    return None
+
+
+def global_bias(markets):
+    """把全球隔夜變化翻譯成整體 / 族群偏向與當沖行動提示。
+
+    回傳:
+      overall_score (float, 約 -5~+5)
+      label (大幅偏空 / 偏空 / 中性偏空 / 中性 / 中性偏多 / 偏多 / 大幅偏多)
+      action_hint (字串,給當沖操作的策略建議)
+      signals (list[str],關鍵影響因子)
+      group_bias (dict[str,float],大族群 → 偏向分數)
+    """
+    overall = 0.0
+    signals = []
+    groups = {}
+
+    nasdaq = _quote_by_name(markets, "那斯達克")
+    sox = _quote_by_name(markets, "費城半導體")
+    sp500 = _quote_by_name(markets, "標普 500")
+    dow = _quote_by_name(markets, "道瓊")
+    tsm = _quote_by_name(markets, "台積電 ADR")
+    dxy = _quote_by_name(markets, "美元指數")
+    us10y = _quote_by_name(markets, "美債10年殖利率")
+    oil = _quote_by_name(markets, "西德州原油")
+    gold = _quote_by_name(markets, "黃金")
+    btc = _quote_by_name(markets, "比特幣")
+
+    # 美股三大指數均值 → 整體風險偏好
+    us = [x for x in (nasdaq, sp500, dow) if x is not None]
+    if us:
+        us_avg = sum(us) / len(us)
+        overall += us_avg * 0.9
+        if us_avg >= 1.0:
+            signals.append(f"美股三大指數平均 +{us_avg:.2f}%,風險偏好升溫")
+        elif us_avg <= -1.0:
+            signals.append(f"美股三大指數平均 {us_avg:.2f}%,避險氣氛濃")
+
+    # 半導體電子:費半 + 台積電 ADR(對台股影響最大)
+    sem = 0.0
+    if sox is not None:
+        sem += sox * 1.5
+        if sox >= 1.5:
+            signals.append(f"費半 +{sox:.2f}%,半導體類股當沖偏多")
+        elif sox <= -1.5:
+            signals.append(f"費半 {sox:.2f}%,半導體類股當沖偏空,等回測再進")
+    if tsm is not None:
+        sem += tsm * 1.0
+        if tsm >= 2:
+            signals.append(f"台積電 ADR +{tsm:.2f}%,2330 開盤可能跳空高開")
+        elif tsm <= -2:
+            signals.append(f"台積電 ADR {tsm:.2f}%,2330 開盤可能跳空低開")
+    if abs(sem) > 0.01:
+        groups["半導體電子"] = sem
+        overall += sem * 0.3
+
+    # 金融:美10年債息上漲利多金融
+    if us10y is not None:
+        if us10y >= 2.0:
+            groups["金融"] = 1.5
+            signals.append(f"美10年債息 +{us10y:.2f}%,金融保險受惠,可優先做多")
+        elif us10y <= -2.0:
+            groups["金融"] = -1.0
+            signals.append(f"美10年債息 {us10y:.2f}%,金融類股動能轉弱")
+
+    # 原物料 / 航運:油價漲利多油氣、利空運輸
+    if oil is not None:
+        if oil >= 2:
+            groups["原物料"] = groups.get("原物料", 0) + 0.8
+            groups["航運"] = groups.get("航運", 0) - 0.8
+            signals.append(f"原油 +{oil:.2f}%,塑化成本上升、航運/航空利空")
+        elif oil <= -2:
+            groups["原物料"] = groups.get("原物料", 0) - 0.4
+            groups["航運"] = groups.get("航運", 0) + 0.8
+            signals.append(f"原油 {oil:.2f}%,航運/航空成本下降,塑化有壓")
+
+    # 美元:強美元 → 出口電子受惠
+    if dxy is not None:
+        if dxy >= 0.5:
+            groups["半導體電子"] = groups.get("半導體電子", 0) + 0.5
+            signals.append(f"美元指數 +{dxy:.2f}%,新台幣偏弱,出口電子受惠")
+        elif dxy <= -0.5:
+            groups["半導體電子"] = groups.get("半導體電子", 0) - 0.3
+            signals.append(f"美元指數 {dxy:.2f}%,新台幣轉強,出口電子匯損壓力")
+
+    # 加密貨幣 / 風險偏好補強
+    if btc is not None:
+        if btc >= 3:
+            overall += 0.5
+            signals.append(f"比特幣 +{btc:.2f}%,加密貨幣概念可順勢追蹤")
+        elif btc <= -3:
+            overall -= 0.3
+
+    # 黃金大漲 → 避險氛圍
+    if gold is not None and gold >= 1.5:
+        signals.append(f"黃金 +{gold:.2f}%,市場避險,風險資產要更謹慎")
+        overall -= 0.3
+
+    # 整體標籤
+    if overall >= 2.0:
+        label, hint = (
+            "大幅偏多",
+            "順勢做多,部位可放大但不追高;空單不做",
+        )
+    elif overall >= 0.8:
+        label, hint = (
+            "偏多",
+            "做多為主,優先選強勢族群,進場守住開盤量能",
+        )
+    elif overall >= -0.3:
+        label, hint = (
+            "中性偏多",
+            "可做多但選股嚴格,弱勢族群避開",
+        )
+    elif overall >= -0.8:
+        label, hint = (
+            "中性",
+            "雙向操作均可,以個股技術面為主,部位減半",
+        )
+    elif overall >= -2.0:
+        label, hint = (
+            "偏空",
+            "做多嚴格挑強勢股,弱勢股不買;可考慮做空當沖",
+        )
+    else:
+        label, hint = (
+            "大幅偏空",
+            "做多部位減半或暫停,優先做空 ETF / 弱勢股當沖,嚴控停損",
+        )
+
+    return {
+        "overall_score": round(overall, 2),
+        "label": label,
+        "action_hint": hint,
+        "signals": signals,
+        "group_bias": {k: round(v, 2) for k, v in groups.items()},
+    }
+
+
+def _direction_for_pick(theme, change_pct, bias):
+    """依個股族群 + 全球盤勢,決定該檔當沖該優先做多/做空還是觀望。"""
+    group = _THEME_TO_GROUP.get(theme)
+    group_b = (bias["group_bias"].get(group, 0.0) if group else 0.0)
+    overall_b = bias["overall_score"]
+    adj = group_b + overall_b * 0.4
+    # 個股本身昨日強勢/弱勢也納入
+    if change_pct is not None:
+        adj += min(max(change_pct / 5.0, -1.0), 1.0)
+
+    if adj >= 1.5:
+        return ("做多優先", "全球與族群盤勢同向偏多,可順勢做多")
+    if adj >= 0.4:
+        return ("偏多可進", "盤勢中性偏多,確認開盤量能再進")
+    if adj >= -0.4:
+        return ("中性看技術", "盤勢中性,進場與否以個股技術訊號為準")
+    if adj >= -1.5:
+        return ("保守做多", "盤勢偏空,僅做最強勢標的,部位減半")
+    return ("暫緩做多", "全球大幅偏空,做多風險高,觀望或考慮反手做空")
+
+
+# ---------------------------------------------------------------------------
 # 盤前當沖精選：從掃描結果挑出隔日最值得當沖的個股,附上進場/停損/停利計畫
 # ---------------------------------------------------------------------------
 
@@ -926,12 +1124,14 @@ def _pick_cautions(row):
     return cautions[:3]
 
 
-def daytrade_picks(rows, top_n=8):
+def daytrade_picks(rows, top_n=8, markets=None):
     """從掃描結果挑出明日最適合當沖的前 N 檔,附上盤前可直接執行的計畫。
 
     嚴格度比一般 screener 高:必須有流動性 + 波動 + 動能,且排除昨日大跌+法人賣超的組合。
-    每檔回傳:入選理由、開盤觸發價、停損、停利、什麼狀況該放棄。
+    若提供 markets(全球盤勢),每檔再依族群偏向判斷今天該做多/觀望/暫緩。
+    每檔回傳:入選理由、開盤觸發價、停損、停利、行動方向、什麼狀況該放棄。
     """
+    bias = global_bias(markets) if markets else None
     def qualified(r):
         if (r.get("turnover_yi") or 0) < 3:        # 流動性不足
             return False
@@ -964,6 +1164,11 @@ def daytrade_picks(rows, top_n=8):
         risk_pct = round((last_close - stop) / last_close * 100, 2)
         reward1_pct = round((target1 - last_close) / last_close * 100, 2)
 
+        direction, direction_note = (
+            _direction_for_pick(r.get("theme"), r.get("change_pct"), bias)
+            if bias else ("—", "")
+        )
+
         picks.append({
             "code": r["code"],
             "name": r["name"],
@@ -978,6 +1183,8 @@ def daytrade_picks(rows, top_n=8):
             "theme": r.get("theme"),
             "inst_lots": r.get("inst_lots"),
             "trust_lots": r.get("trust_lots"),
+            "direction": direction,
+            "direction_note": direction_note,
             "reasons": _pick_reasons(r),
             "cautions": _pick_cautions(r),
             "open_plan": {
