@@ -311,3 +311,122 @@ def deep_analyze(stock: dict) -> dict:
 
     _deep_cache[code] = result
     return result
+
+
+# ===========================================================================
+# 盤前簡報（盤前情報整理 + 風險檢查 + 交易計畫）
+# ===========================================================================
+
+
+class PremarketBriefing(BaseModel):
+    """每日盤前簡報的結構化輸出。"""
+
+    summary: str             # 一句話盤前總結
+    market_sentiment: str    # 大盤與國際盤前情緒
+    key_events: str          # 今日重要財經事件
+    bullish_factors: str     # 今日主要利多
+    bearish_factors: str     # 今日主要利空
+    sector_rotation: str     # 熱門題材與資金流向
+    holdings_check: str      # 持股盤前風險檢查
+    scenario_plan: str       # 開高／開低／平盤三情境應對
+    avoid_mistakes: str      # 今日最需避免的交易錯誤
+    discipline_note: str     # 風控與交易紀律提醒
+
+
+_PREMARKET_SYSTEM_PROMPT = """你是一位資深的台股盤前交易員，同時擔任使用者的風控助理與交易紀律檢查員。
+你會收到今天的國際盤前指標、題材族群強弱、使用者的持股與觀察股資料，
+請做一份「盤前情報整理 ＋ 風險檢查 ＋ 交易計畫」，涵蓋：
+
+- market_sentiment：大盤與國際盤前情緒（美股、費半、台積電 ADR、匯率、債息、原物料、加密貨幣）
+- key_events：今日可能影響台股的重要財經事件（依你的知識列出，並提醒使用者自行查證最新行事曆）
+- bullish_factors／bearish_factors：今日主要利多與利空
+- sector_rotation：熱門題材與資金可能流向、族群強弱與延續性
+- holdings_check：持股盤前風險檢查（技術位階、法人動向、是否接近壓力或跌破支撐、需留意事件）
+- scenario_plan：開高、開低、平盤三種情境的應對觀察重點
+- avoid_mistakes：今日最需要避免的交易錯誤（追高、過度交易、單一產業過度集中、槓桿）
+- discipline_note：風控與交易紀律提醒
+- summary：一句話盤前總結
+
+最重要的規範：
+- 絕對不要直接叫使用者買進或賣出某一支股票。你的角色是盤前助理與風控，不是報明牌。
+- 請改為列出觀察價、支撐、壓力、停損參考，以及加碼／減碼的「條件」，讓使用者自己判斷。
+- 一律以保守的風險控管角度分析。
+- key_events 若引用自你的知識，請說明可能非最新、需自行查證最新財經行事曆。
+- 一律使用繁體中文，專業但易懂，每段控制在 3~6 句。
+- 僅供教學與研究參考，不構成投資建議。"""
+
+
+def _v(value):
+    return "—" if value is None else value
+
+
+def _premarket_stock_line(s):
+    return (
+        f"  {s['name']}（{s['code']}）：收 {_v(s['last_close'])}（{_v(s['change_pct'])}%）；"
+        f"技術評分 {_v(s['technical'])}；週線 {_v(s['weekly'])}；"
+        f"RSI {_v(s['rsi'])}；KD {_v(s['kd_k'])}/{_v(s['kd_d'])}；"
+        f"三大法人 {_v(s['inst_lots'])} 張；壓力 R1 {_v(s['r1'])}／R2 {_v(s['r2'])}；"
+        f"支撐 S1 {_v(s['s1'])}／S2 {_v(s['s2'])}；20日壓力/支撐 {_v(s['res20'])}/{_v(s['sup20'])}；"
+        f"參考停損 {_v(s['stop'])}；當日K線 {_v(s['pattern'])}"
+    )
+
+
+def _build_premarket_prompt(markets, themes, holdings, watch):
+    mkt_lines = []
+    for m in markets:
+        if m.get("price") is None:
+            mkt_lines.append(f"  {m['name']}：資料暫無")
+        else:
+            chg = m.get("change_pct") or 0
+            mkt_lines.append(f"  {m['name']}：{m['price']}（{chg:+}%）")
+    strong = sorted(themes, key=lambda t: t["avg_change"], reverse=True)[:5]
+    weak = sorted(themes, key=lambda t: t["avg_change"])[:3]
+    strong_txt = "、".join(f"{t['name']}({t['avg_change']:+}%)" for t in strong) or "—"
+    weak_txt = "、".join(f"{t['name']}({t['avg_change']:+}%)" for t in weak) or "—"
+    holdings_txt = "\n".join(_premarket_stock_line(s) for s in holdings) or "  （使用者未提供持股）"
+    watch_txt = "\n".join(_premarket_stock_line(s) for s in watch) or "  （使用者未提供觀察股）"
+
+    return f"""請做今天的台股盤前簡報。
+
+【國際盤前指標（最近收盤）】
+{chr(10).join(mkt_lines)}
+
+【題材族群強弱（依成分股當日平均漲跌幅）】
+強勢族群：{strong_txt}
+弱勢族群：{weak_txt}
+
+【我的持股】
+{holdings_txt}
+
+【觀察股】
+{watch_txt}
+
+請依系統設定，完成今天的盤前情報整理、風險檢查與交易計畫。"""
+
+
+def premarket_briefing(markets, themes, holdings, watch):
+    """產生每日盤前簡報。"""
+    if not ai_enabled():
+        return {"available": False, "message": "尚未設定 ANTHROPIC_API_KEY，無法產生盤前簡報。"}
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic()
+        response = client.messages.parse(
+            model=AI_MODEL,
+            max_tokens=10000,
+            thinking={"type": "adaptive"},
+            system=_PREMARKET_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": _build_premarket_prompt(markets, themes, holdings, watch),
+            }],
+            output_format=PremarketBriefing,
+        )
+        return {
+            "available": True,
+            "model": AI_MODEL,
+            "briefing": response.parsed_output.model_dump(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "message": f"盤前簡報產生失敗：{exc}"}

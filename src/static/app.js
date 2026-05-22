@@ -252,6 +252,97 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // ---- 盤前簡報 -----------------------------------------------------------
+  function premarketHTML(d) {
+    const mkt = (d.markets || [])
+      .map((m) => {
+        const c = m.change_pct;
+        const cls = c == null ? "" : dirClass(c);
+        return `<div class="pm-mkt"><span>${esc(m.name)}</span>
+          <span><b>${m.price == null ? "—" : m.price}</b>
+          <span class="${cls}">${c == null ? "" : fmtPct(c)}</span></span></div>`;
+      })
+      .join("");
+
+    let briefing;
+    if (d.available && d.briefing) {
+      const a = d.briefing;
+      const block = (t, x) => `<div class="ai-role"><h5>${t}</h5><p>${esc(x)}</p></div>`;
+      briefing = `
+        <p class="ai-summary">${esc(a.summary)}</p>
+        ${block("大盤與國際盤前情緒", a.market_sentiment)}
+        ${block("今日重要財經事件", a.key_events)}
+        ${block("主要利多", a.bullish_factors)}
+        ${block("主要利空", a.bearish_factors)}
+        ${block("熱門題材與資金流向", a.sector_rotation)}
+        ${block("持股盤前風險檢查", a.holdings_check)}
+        ${block("開高／開低／平盤 應對計畫", a.scenario_plan)}
+        <div class="ai-role risk"><h5>今日最需避免的交易錯誤</h5><p>${esc(a.avoid_mistakes)}</p></div>
+        ${block("風控與交易紀律提醒", a.discipline_note)}
+        <p class="ai-model">AI 盤前助理（${esc(d.model || "")}）· 不提供買賣明牌 · 僅供參考</p>`;
+    } else {
+      briefing = `<div class="ai-unavailable"><p>${esc(d.message || "AI 盤前簡報無法產生")}</p></div>`;
+    }
+
+    const levels = (d.holdings || []).concat(d.watch || []);
+    let table = "";
+    if (levels.length) {
+      table =
+        '<div class="modal-section"><h4>持股／觀察股 觀察價位</h4><div class="screener-list">' +
+        levels
+          .map(
+            (s) => `
+        <div class="srow" data-code="${s.code}" data-name="${esc(s.name)}">
+          <div class="sinfo">
+            <div class="sname">${esc(s.name)} <span class="scode">${s.code}</span></div>
+            <div class="smetrics">
+              <span>現價 <b>${fmtPrice(s.last_close)}</b></span>
+              <span class="${dirClass(s.change_pct)}">${fmtPct(s.change_pct)}</span>
+              <span>壓力 ${s.r1} / ${s.r2}</span>
+              <span>支撐 ${s.s1} / ${s.s2}</span>
+              <span class="down">停損 ${s.stop}</span>
+            </div>
+          </div>
+        </div>`
+          )
+          .join("") +
+        "</div></div>";
+    }
+
+    return `
+      <div class="modal-section">
+        <h4>國際盤前指標（最近收盤）</h4>
+        <div class="pm-markets">${mkt}</div>
+      </div>
+      <div class="modal-section ai-section">
+        <h4>AI 盤前簡報</h4>
+        ${briefing}
+      </div>
+      ${table}
+      <p style="font-size:0.76rem;color:var(--muted);margin-top:12px">⚠️ ${esc(d.disclaimer || "")}</p>`;
+  }
+
+  async function loadPremarket() {
+    const btn = document.getElementById("pm-run-btn");
+    const resultEl = document.getElementById("pm-result");
+    const holdings = document.getElementById("pm-holdings").value.trim();
+    const watch = document.getElementById("pm-watch").value.trim();
+    btn.disabled = true;
+    resultEl.innerHTML =
+      '<p class="loading">產生盤前簡報中…<br><small>抓國際盤、分析持股、AI 整理計畫，約需 1–3 分鐘，請稍候</small></p>';
+    try {
+      const q = `holdings=${encodeURIComponent(holdings)}&watch=${encodeURIComponent(watch)}`;
+      const d = await fetchJSON(`/api/premarket?${q}`, {}, { attempts: 1, timeoutMs: 240000 });
+      resultEl.innerHTML = premarketHTML(d);
+      resultEl.querySelectorAll(".srow").forEach((row) => {
+        row.addEventListener("click", () => openDetail(row.dataset.code, row.dataset.name));
+      });
+    } catch (err) {
+      resultEl.innerHTML = `<div class="ai-unavailable"><p>盤前簡報產生失敗：${esc(err.message)}</p></div>`;
+    }
+    btn.disabled = false;
+  }
+
   // ---- 個股明細 -----------------------------------------------------------
   function kv(k, v) {
     return `<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
@@ -814,6 +905,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const tab = btn.dataset.tab;
       document.getElementById("tab-screener").classList.toggle("hidden", tab !== "screener");
       document.getElementById("tab-categories").classList.toggle("hidden", tab !== "categories");
+      document.getElementById("tab-premarket").classList.toggle("hidden", tab !== "premarket");
       if (tab === "categories" && !categoriesLoaded) loadCategories();
     });
   });
@@ -839,6 +931,8 @@ document.addEventListener("DOMContentLoaded", () => {
     await loadScreener();
     btn.disabled = false;
   });
+
+  document.getElementById("pm-run-btn").addEventListener("click", loadPremarket);
 
   document.getElementById("modal-close").addEventListener("click", closeModal);
   modal.addEventListener("click", (e) => {

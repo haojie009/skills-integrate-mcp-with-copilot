@@ -55,6 +55,7 @@ DISCLAIMER = (
 # 記憶體快取
 _screener_cache: list | None = None   # 排序後的當沖選股清單
 _detail_cache: dict = {}              # code -> analyze_stock 結果
+_premarket_cache: dict = {}           # holdings|watch -> 盤前簡報
 _screener_lock = threading.Lock()     # 避免冷啟動時多個請求重複載入
 
 
@@ -171,12 +172,79 @@ def deep_analysis(code: str, name: str = ""):
     return {"disclaimer": DISCLAIMER, **ai_advisor.deep_analyze(result)}
 
 
+def _summarize_for_briefing(code: str, name: str = ""):
+    """把個股分析整理成盤前簡報用的精簡摘要。"""
+    d = _get_detail(code, name)
+    if d is None:
+        return None
+    ind = d["indicators"]
+    kd = ind.get("kd") or {}
+    piv = d["levels"]["pivot"]
+    sr = d["levels"]["support_resistance"]
+    inst = d.get("institutional") or {}
+    return {
+        "code": d["code"],
+        "name": d["name"],
+        "last_close": d["last_close"],
+        "change_pct": d["change_pct"],
+        "technical": d["scores"]["technical"],
+        "weekly": (d.get("weekly") or {}).get("trend", "—"),
+        "rsi": ind.get("rsi14"),
+        "kd_k": kd.get("k"),
+        "kd_d": kd.get("d"),
+        "inst_lots": inst.get("inst_lots"),
+        "r1": piv["r1"], "r2": piv["r2"], "s1": piv["s1"], "s2": piv["s2"],
+        "res20": sr["resistance"], "sup20": sr["support"],
+        "stop": d["plans"]["day"]["stop"],
+        "pattern": d["pattern"]["text"],
+    }
+
+
+@app.get("/api/premarket")
+def premarket(holdings: str = "", watch: str = ""):
+    """每日盤前簡報：國際盤前情緒、族群輪動、持股風險檢查與情境計畫。"""
+    key = f"{holdings.strip()}|{watch.strip()}"
+    if key in _premarket_cache:
+        return _premarket_cache[key]
+
+    codes_h = [c.strip() for c in holdings.split(",") if c.strip()][:10]
+    codes_w = [c.strip() for c in watch.split(",") if c.strip()][:10]
+    screener = _get_screener()
+    name_by_code = {s["code"]: s["name"] for s in screener}
+
+    holdings_data = [
+        s for c in codes_h
+        if (s := _summarize_for_briefing(c, name_by_code.get(c, "")))
+    ]
+    watch_data = [
+        s for c in codes_w
+        if (s := _summarize_for_briefing(c, name_by_code.get(c, "")))
+    ]
+
+    markets = data_provider.load_global_markets()
+    cats = themes.build_categories(screener)
+    briefing = ai_advisor.premarket_briefing(
+        markets, cats["themes"], holdings_data, watch_data
+    )
+
+    result = {
+        "disclaimer": DISCLAIMER,
+        "markets": markets,
+        "holdings": holdings_data,
+        "watch": watch_data,
+        **briefing,
+    }
+    _premarket_cache[key] = result
+    return result
+
+
 @app.post("/api/refresh")
 def refresh():
     """清空快取，並在背景重新掃描。"""
     global _screener_cache
     _screener_cache = None
     _detail_cache.clear()
+    _premarket_cache.clear()
     ai_advisor.clear_cache()
     data_provider.reset_caches()
     threading.Thread(target=_get_screener, daemon=True).start()

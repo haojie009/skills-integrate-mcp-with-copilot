@@ -631,6 +631,52 @@ def load_intraday(code):
         return {"code": code, "last": None, "prev_close": None, "points": []}
 
 
+# 盤前情報：國際市場指標（Yahoo 代號, 顯示名稱）
+_GLOBAL_SYMBOLS = [
+    ("^IXIC", "那斯達克"), ("^SOX", "費城半導體"), ("^GSPC", "標普 500"),
+    ("^DJI", "道瓊"), ("TSM", "台積電 ADR"), ("DX-Y.NYB", "美元指數"),
+    ("^TNX", "美債10年殖利率"), ("CL=F", "西德州原油"), ("GC=F", "黃金"),
+    ("BTC-USD", "比特幣"),
+]
+
+
+def _fetch_global_quote(symbol):
+    """抓單一國際指標的最新價與漲跌幅。"""
+    import requests
+
+    resp = requests.get(
+        _YAHOO_CHART.format(symbol=symbol),
+        params={"range": "5d", "interval": "1d"},
+        headers=_HTTP_HEADERS,
+        timeout=8,
+    )
+    resp.raise_for_status()
+    meta = (resp.json()["chart"]["result"][0].get("meta")) or {}
+    price = _safe_float(meta.get("regularMarketPrice"))
+    prev = _safe_float(meta.get("chartPreviousClose") or meta.get("previousClose"))
+    if price is None or not prev:
+        return None
+    return {"price": round(price, 2), "change_pct": round((price / prev - 1) * 100, 2)}
+
+
+def load_global_markets():
+    """抓國際盤前指標（美股、費半、ADR、匯率、債息、原物料、加密貨幣）。"""
+
+    def task(item):
+        symbol, name = item
+        try:
+            quote = _fetch_global_quote(symbol)
+        except Exception:  # noqa: BLE001
+            quote = None
+        return {"name": name, **(quote or {"price": None, "change_pct": None})}
+
+    out = []
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        for result in pool.map(task, _GLOBAL_SYMBOLS):
+            out.append(result)
+    return out
+
+
 def _one_stock_fundamentals(code):
     """取單一個股基本面（共用全市場 BWIBBU_ALL 快取）。"""
     global _fund_cache, _fund_loaded

@@ -17,6 +17,7 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="screener">當沖選股</button>
       <button class="tab-btn" data-tab="categories">個股分類</button>
+      <button class="tab-btn" data-tab="premarket">盤前簡報</button>
     </nav>
 
     <main>
@@ -54,6 +55,24 @@
           <div id="theme-list">
             <p class="loading">載入中…</p>
           </div>
+        </section>
+      </div>
+
+      <div id="tab-premarket" class="hidden">
+        <section id="premarket">
+          <h3>每日盤前簡報</h3>
+          <p class="pm-intro">開盤前的情報整理、持股風險檢查與交易計畫。
+            AI 扮演盤前助理與風控,不提供買賣明牌。</p>
+          <div class="pm-form">
+            <label>我的持股（代號，逗號分隔）
+              <input id="pm-holdings" type="text" placeholder="例：2330,2317,2454" />
+            </label>
+            <label>觀察股（選填）
+              <input id="pm-watch" type="text" placeholder="例：3008,2603" />
+            </label>
+            <button id="pm-run-btn" class="retry-btn">產生今日盤前簡報</button>
+          </div>
+          <div id="pm-result"></div>
         </section>
       </div>
     </main>
