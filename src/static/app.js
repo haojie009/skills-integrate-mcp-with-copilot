@@ -12,26 +12,83 @@ document.addEventListener("DOMContentLoaded", () => {
   let categoriesLoaded = false;
   let watchSet = new Set();
 
-  // ---- 口袋名單（存於瀏覽器 localStorage）--------------------------------
-  function getWatchlist() {
+  // ---- 口袋名單（登入時同步雲端 Supabase，未登入時存本機 localStorage）----
+  let cachedWatchlist = [];
+
+  function readLocalWatchlist() {
     try {
       return JSON.parse(localStorage.getItem("watchlist") || "[]");
     } catch (e) {
       return [];
     }
   }
-  function setWatchlist(list) {
+  function writeLocalWatchlist(list) {
     localStorage.setItem("watchlist", JSON.stringify(list));
   }
+
+  function isLoggedIn() {
+    return !!(window.SB && window.SB.getUser());
+  }
+
+  async function loadWatchlistFromBackend() {
+    if (isLoggedIn()) {
+      try {
+        const cloud = await window.SB.cloudGetWatchlist();
+        cachedWatchlist = cloud || [];
+        watchSet = new Set(cachedWatchlist);
+        return;
+      } catch (e) {
+        console.warn("讀取雲端口袋名單失敗，改用本機資料", e);
+      }
+    }
+    cachedWatchlist = readLocalWatchlist();
+    watchSet = new Set(cachedWatchlist);
+  }
+
+  async function persistWatchlist() {
+    if (isLoggedIn()) {
+      try {
+        await window.SB.cloudSetWatchlist(cachedWatchlist);
+        return;
+      } catch (e) {
+        console.warn("寫入雲端失敗，改存本機", e);
+      }
+    }
+    writeLocalWatchlist(cachedWatchlist);
+  }
+
+  function getWatchlist() {
+    return [...cachedWatchlist];
+  }
+  function setWatchlistInMemory(list) {
+    cachedWatchlist = [...new Set(list)];
+    watchSet = new Set(cachedWatchlist);
+  }
   function toggleWatch(code) {
-    let list = getWatchlist();
-    if (list.includes(code)) list = list.filter((c) => c !== code);
-    else list.push(code);
-    setWatchlist(list);
-    return list.includes(code);
+    if (watchSet.has(code)) {
+      cachedWatchlist = cachedWatchlist.filter((c) => c !== code);
+    } else {
+      cachedWatchlist = [...cachedWatchlist, code];
+    }
+    watchSet = new Set(cachedWatchlist);
+    persistWatchlist();
+    return watchSet.has(code);
   }
   function refreshWatchSet() {
-    watchSet = new Set(getWatchlist());
+    watchSet = new Set(cachedWatchlist);
+  }
+
+  async function migrateLocalToCloud() {
+    const local = readLocalWatchlist();
+    if (!local.length) return;
+    try {
+      const cloud = (await window.SB.cloudGetWatchlist()) || [];
+      const merged = [...new Set([...cloud, ...local])];
+      await window.SB.cloudSetWatchlist(merged);
+      localStorage.removeItem("watchlist");
+    } catch (e) {
+      console.warn("遷移本機口袋名單到雲端失敗", e);
+    }
   }
 
   // ---- 工具函式 -----------------------------------------------------------
@@ -1016,7 +1073,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("pm-run-btn").addEventListener("click", loadPremarket);
 
-  document.getElementById("wl-add-btn").addEventListener("click", () => {
+  document.getElementById("wl-add-btn").addEventListener("click", async () => {
     const input = document.getElementById("wl-input");
     const codes = input.value
       .split(/[,，\s]+/)
@@ -1026,9 +1083,11 @@ document.addEventListener("DOMContentLoaded", () => {
     codes.forEach((c) => {
       if (!list.includes(c)) list.push(c);
     });
-    setWatchlist(list);
+    setWatchlistInMemory(list);
+    await persistWatchlist();
     input.value = "";
     renderWatchlist();
+    renderScreener();
   });
 
   document.getElementById("modal-close").addEventListener("click", closeModal);
@@ -1038,6 +1097,127 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeModal();
   });
+
+  // ---- 登入 / 註冊 modal --------------------------------------------------
+  const authModal = document.getElementById("auth-modal");
+  const authTitle = document.getElementById("auth-title");
+  const authEmail = document.getElementById("auth-email");
+  const authPassword = document.getElementById("auth-password");
+  const authErr = document.getElementById("auth-err");
+  const authSubmit = document.getElementById("auth-submit");
+  const authSwitchLink = document.getElementById("auth-switch-link");
+  const accountStatus = document.getElementById("account-status");
+  const accountBtn = document.getElementById("account-btn");
+  let authMode = "signin"; // 或 "signup"
+
+  function updateAuthMode() {
+    if (authMode === "signin") {
+      authTitle.textContent = "登入";
+      authSubmit.textContent = "登入";
+      authSwitchLink.textContent = "沒有帳號?註冊一個";
+    } else {
+      authTitle.textContent = "註冊";
+      authSubmit.textContent = "建立帳號";
+      authSwitchLink.textContent = "已經有帳號?改成登入";
+    }
+    authErr.textContent = "";
+  }
+  function openAuthModal() {
+    authMode = "signin";
+    updateAuthMode();
+    authEmail.value = "";
+    authPassword.value = "";
+    authErr.textContent = "";
+    authModal.classList.remove("hidden");
+  }
+  function closeAuthModal() {
+    authModal.classList.add("hidden");
+  }
+  authSwitchLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    authMode = authMode === "signin" ? "signup" : "signin";
+    updateAuthMode();
+  });
+  document.getElementById("auth-close").addEventListener("click", closeAuthModal);
+  authModal.addEventListener("click", (e) => {
+    if (e.target === authModal) closeAuthModal();
+  });
+
+  authSubmit.addEventListener("click", async () => {
+    if (!window.SB) {
+      authErr.textContent = "雲端服務未載入，請重新整理頁面";
+      return;
+    }
+    const email = authEmail.value.trim();
+    const password = authPassword.value;
+    if (!email || password.length < 6) {
+      authErr.textContent = "請輸入 Email,密碼至少 6 碼";
+      return;
+    }
+    authSubmit.disabled = true;
+    authErr.textContent = "";
+    try {
+      if (authMode === "signup") {
+        await window.SB.signUp(email, password);
+        // 註冊完直接登入（若已關閉 email confirm）
+        try {
+          await window.SB.signIn(email, password);
+        } catch (_) {
+          authErr.textContent = "註冊成功,請至信箱完成驗證後再登入";
+          return;
+        }
+      } else {
+        await window.SB.signIn(email, password);
+      }
+      closeAuthModal();
+    } catch (e) {
+      authErr.textContent = (e && e.message) || "操作失敗";
+    } finally {
+      authSubmit.disabled = false;
+    }
+  });
+
+  accountBtn.addEventListener("click", async () => {
+    if (isLoggedIn()) {
+      if (confirm("確定要登出?")) {
+        await window.SB.signOut();
+      }
+    } else {
+      openAuthModal();
+    }
+  });
+
+  function updateAccountBar(user) {
+    if (user) {
+      const label = user.email || "已登入";
+      accountStatus.textContent = label;
+      accountStatus.classList.add("on");
+      accountBtn.textContent = "登出";
+    } else {
+      accountStatus.textContent = "未登入（口袋名單僅存本機）";
+      accountStatus.classList.remove("on");
+      accountBtn.textContent = "登入 / 註冊";
+    }
+  }
+
+  let lastAuthUserId; // undefined = 尚未載入過
+  if (window.SB) {
+    window.SB.onAuth(async (user) => {
+      updateAccountBar(user);
+      const uid = user ? user.id : null;
+      if (lastAuthUserId !== undefined && uid === lastAuthUserId) return;
+      lastAuthUserId = uid;
+      if (user) {
+        await migrateLocalToCloud();
+      }
+      await loadWatchlistFromBackend();
+      if (currentTab === "watchlist") renderWatchlist();
+      if (screenerData.length) renderScreener();
+    });
+  } else {
+    updateAccountBar(null);
+    loadWatchlistFromBackend();
+  }
 
   // ---- 初始化 -------------------------------------------------------------
   loadScreener();
