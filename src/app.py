@@ -128,6 +128,17 @@ def screener(limit: int = 200):
     }
 
 
+@app.get("/api/picks")
+def picks(top_n: int = 8):
+    """盤前精選當沖名單:從掃描結果挑出最值得當沖的前 N 檔,含進場/停損/停利計畫。"""
+    rows = _get_screener()
+    return {
+        "data_source": data_provider.data_source_label(),
+        "disclaimer": DISCLAIMER,
+        "picks": analysis.daytrade_picks(rows, top_n=top_n),
+    }
+
+
 @app.get("/api/categories")
 def categories():
     """個股分類：全市場成交量排行與熱門題材。"""

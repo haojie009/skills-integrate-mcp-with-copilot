@@ -865,6 +865,141 @@ def screen_score(row):
 
 
 # ---------------------------------------------------------------------------
+# 盤前當沖精選：從掃描結果挑出隔日最值得當沖的個股,附上進場/停損/停利計畫
+# ---------------------------------------------------------------------------
+
+
+def _pick_reasons(row):
+    """列出個股入選的量化理由（盤前可讀的摘要）。"""
+    reasons = []
+    tags = row.get("tags") or []
+    turn = row.get("turnover_yi") or 0
+    amp = row.get("amplitude_pct") or 0
+    chg = row.get("change_pct") or 0
+
+    if turn >= 10:
+        reasons.append(f"成交 {turn:.1f} 億,流動性充足,進出順暢")
+    elif turn >= 3:
+        reasons.append(f"成交 {turn:.1f} 億,流動性達到當沖門檻")
+    if "波動足" in tags:
+        reasons.append(f"振幅 {amp}% 落在當沖甜蜜點(3.5–9%)")
+    elif amp >= 3:
+        reasons.append(f"振幅 {amp}% 提供操作空間")
+    if "突破前高" in tags:
+        reasons.append("突破近 20 日新高,空方套牢壓力被洗掉")
+    if "爆量" in tags and "突破前高" not in tags:
+        reasons.append(f"量能放大至均量 {row.get('vol_ratio')} 倍,主力動作明顯")
+    if "強勢" in tags:
+        reasons.append(f"今日強漲 +{chg}%,動能延續機率高")
+    if "法人大買" in tags:
+        reasons.append(f"三大法人合計買超 {row.get('inst_lots')} 張,有資金撐盤")
+    elif "法人偏多" in tags:
+        reasons.append(f"三大法人小幅買超 {row.get('inst_lots')} 張")
+    if "投信買超" in tags:
+        reasons.append(f"投信買超 {row.get('trust_lots')} 張,中期主力鎖籌碼")
+    if "小型爆發" in tags:
+        reasons.append("中小型股爆量+大漲,適合短線快進快出")
+    if "飆股訊號" in tags:
+        reasons.append("符合飆股雷達:大漲 + 爆量 + 突破前高")
+    return reasons[:5]
+
+
+def _pick_cautions(row):
+    """列出個股的風險警示與不該追的條件。"""
+    cautions = []
+    tags = row.get("tags") or []
+    chg = row.get("change_pct") or 0
+    amp = row.get("amplitude_pct") or 0
+
+    if chg >= 8:
+        cautions.append(f"昨日已大漲 {chg}%,跳空高開 >2% 不建議追,等回測進")
+    elif chg >= 5:
+        cautions.append("漲幅已高,只在回測不破開盤價時進,不追高")
+    if amp >= 10:
+        cautions.append(f"振幅 {amp}% 偏激烈,部位減半操作")
+    if "法人賣超" in tags:
+        cautions.append("三大法人賣超,動能可能不續,只做短進短出")
+    if chg <= -3:
+        cautions.append("昨收弱勢,需確認開盤站上開盤價且翻紅才考慮")
+    if not cautions:
+        cautions.append("若開盤跳空高開超過 2% 改觀望,等回測再進")
+    return cautions[:3]
+
+
+def daytrade_picks(rows, top_n=8):
+    """從掃描結果挑出明日最適合當沖的前 N 檔,附上盤前可直接執行的計畫。
+
+    嚴格度比一般 screener 高:必須有流動性 + 波動 + 動能,且排除昨日大跌+法人賣超的組合。
+    每檔回傳:入選理由、開盤觸發價、停損、停利、什麼狀況該放棄。
+    """
+    def qualified(r):
+        if (r.get("turnover_yi") or 0) < 3:        # 流動性不足
+            return False
+        if (r.get("amplitude_pct") or 0) < 3:      # 波動太小,沒空間
+            return False
+        if (r.get("score") or 0) < 60:             # 綜合分過低
+            return False
+        # 排除:昨日跌深 + 法人賣超(動能反向)
+        chg = r.get("change_pct") or 0
+        inst = r.get("inst_lots") or 0
+        if chg < -3 and inst < -500:
+            return False
+        return True
+
+    candidates = [r for r in rows if qualified(r)]
+    candidates.sort(
+        key=lambda r: (r.get("score") or 0) * 0.7 + (r.get("hot_score") or 0) * 0.3,
+        reverse=True,
+    )
+
+    picks = []
+    for r in candidates[: max(1, top_n)]:
+        last_close = r["close"]
+        amp_pct = (r.get("amplitude_pct") or 4.0) / 100.0
+        # 觸發價:盤後預期開盤站上昨收即可進
+        trigger_price = round_tick(last_close * (1 + amp_pct * 0.15))
+        target1 = round_tick(last_close * (1 + amp_pct * 0.45))
+        target2 = round_tick(last_close * (1 + amp_pct * 0.75))
+        stop = round_tick(last_close * (1 - amp_pct * 0.35))
+        risk_pct = round((last_close - stop) / last_close * 100, 2)
+        reward1_pct = round((target1 - last_close) / last_close * 100, 2)
+
+        picks.append({
+            "code": r["code"],
+            "name": r["name"],
+            "last_close": last_close,
+            "change_pct": r.get("change_pct"),
+            "turnover_yi": r.get("turnover_yi"),
+            "amplitude_pct": r.get("amplitude_pct"),
+            "vol_ratio": r.get("vol_ratio"),
+            "score": r.get("score"),
+            "hot_score": r.get("hot_score"),
+            "tags": r.get("tags") or [],
+            "theme": r.get("theme"),
+            "inst_lots": r.get("inst_lots"),
+            "trust_lots": r.get("trust_lots"),
+            "reasons": _pick_reasons(r),
+            "cautions": _pick_cautions(r),
+            "open_plan": {
+                "trigger": f"開盤 5–10 分鐘站穩 {trigger_price} 以上且量續放,順勢做多",
+                "trigger_price": trigger_price,
+                "target1": target1,
+                "target1_pct": reward1_pct,
+                "target2": target2,
+                "stop": stop,
+                "stop_pct": risk_pct,
+                "exit_time": "13:00 起分批停利,13:25 強制平倉,絕不留倉",
+                "position_hint": (
+                    "單檔不超過總部位 10%(飆股訊號 / 小型爆發 降至 7%)"
+                    if "飆股訊號" in (r.get("tags") or []) or "小型爆發" in (r.get("tags") or [])
+                    else "單檔不超過總部位 15%"
+                ),
+            },
+        })
+    return picks
+
+
+# ---------------------------------------------------------------------------
 # 多時間框架：週線趨勢
 # ---------------------------------------------------------------------------
 

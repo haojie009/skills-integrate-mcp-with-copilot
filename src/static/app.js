@@ -458,6 +458,83 @@ document.addEventListener("DOMContentLoaded", () => {
       <p style="font-size:0.76rem;color:var(--muted);margin-top:12px">⚠️ ${esc(d.disclaimer || "")}</p>`;
   }
 
+  // ---- 盤前精選當沖名單 -------------------------------------------------
+  function pickCardHTML(p, rank) {
+    const op = p.open_plan || {};
+    const tagsHTML = (p.tags || [])
+      .map((t) => `<span class="stag">${esc(t)}</span>`)
+      .join("");
+    const reasonsHTML = (p.reasons || [])
+      .map((r) => `<li>${esc(r)}</li>`)
+      .join("");
+    const cautionsHTML = (p.cautions || [])
+      .map((c) => `<li>${esc(c)}</li>`)
+      .join("");
+    const dirCls = (p.change_pct || 0) >= 0 ? "up" : "down";
+    return `
+      <div class="pick-card" data-code="${p.code}" data-name="${esc(p.name)}">
+        <div class="pick-head">
+          <div class="pick-rank">#${rank}</div>
+          <div class="pick-title">
+            <div class="pick-name">${esc(p.name)} <span class="pick-code">${p.code}</span></div>
+            <div class="pick-meta">
+              <span class="${dirCls}">${fmtPrice(p.last_close)}</span>
+              <span class="${dirCls}">${fmtPct(p.change_pct || 0)}</span>
+              <span>振幅 ${(p.amplitude_pct || 0).toFixed(1)}%</span>
+              <span>${(p.turnover_yi || 0).toFixed(1)} 億</span>
+              ${p.theme ? `<span class="pick-theme">${esc(p.theme)}</span>` : ""}
+            </div>
+          </div>
+          <div class="pick-score">
+            <div class="pick-score-num">${Math.round(p.score || 0)}</div>
+            <div class="pick-score-lbl">當沖分</div>
+          </div>
+        </div>
+        <div class="pick-tags">${tagsHTML}</div>
+        <div class="pick-plan">
+          <div class="pp-row"><b>進場</b>${esc(op.trigger || "—")}</div>
+          <div class="pp-grid">
+            <div><span>觸發</span><b>${fmtPrice(op.trigger_price || 0)}</b></div>
+            <div><span>停利1</span><b class="up">${fmtPrice(op.target1 || 0)} (+${op.target1_pct}%)</b></div>
+            <div><span>停利2</span><b class="up">${fmtPrice(op.target2 || 0)}</b></div>
+            <div><span>停損</span><b class="down">${fmtPrice(op.stop || 0)} (-${op.stop_pct}%)</b></div>
+          </div>
+          <div class="pp-row"><b>出場</b>${esc(op.exit_time || "—")}</div>
+          <div class="pp-row"><b>部位</b>${esc(op.position_hint || "—")}</div>
+        </div>
+        ${reasonsHTML ? `<div class="pick-block"><b>✅ 入選理由</b><ul>${reasonsHTML}</ul></div>` : ""}
+        ${cautionsHTML ? `<div class="pick-block warn"><b>⚠️ 風險與不該追的條件</b><ul>${cautionsHTML}</ul></div>` : ""}
+      </div>`;
+  }
+
+  let picksLoaded = false;
+  async function loadPicks() {
+    const wrap = document.getElementById("picks-list");
+    if (!wrap) return;
+    wrap.innerHTML = '<p class="loading">挑選盤前精選名單中…</p>';
+    try {
+      const d = await fetchJSON("/api/picks?top_n=8", {}, { attempts: 3, timeoutMs: 60000 });
+      const picks = d.picks || [];
+      if (!picks.length) {
+        wrap.innerHTML =
+          '<p class="loading">目前沒有符合嚴格條件的當沖標的(可能成交清淡或市場動能不足)。</p>';
+        return;
+      }
+      wrap.innerHTML = picks.map((p, i) => pickCardHTML(p, i + 1)).join("");
+      wrap.querySelectorAll(".pick-card").forEach((card) => {
+        card.addEventListener("click", (e) => {
+          if (e.target.closest("a,button")) return;
+          openDetail(card.dataset.code, card.dataset.name);
+        });
+      });
+      picksLoaded = true;
+    } catch (err) {
+      wrap.innerHTML = `<div class="ai-unavailable"><p>挑選失敗:${esc(err.message)}</p>
+        <button class="retry-btn" id="picks-retry">重試</button></div>`;
+      document.getElementById("picks-retry").addEventListener("click", loadPicks);
+    }
+  }
+
   async function loadPremarket() {
     const btn = document.getElementById("pm-run-btn");
     const resultEl = document.getElementById("pm-result");
@@ -1045,6 +1122,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("tab-premarket").classList.toggle("hidden", tab !== "premarket");
       document.getElementById("tab-watchlist").classList.toggle("hidden", tab !== "watchlist");
       if (tab === "categories" && !categoriesLoaded) loadCategories();
+      if (tab === "premarket" && !picksLoaded) loadPicks();
       if (tab === "watchlist") renderWatchlist();
     });
   });
@@ -1067,7 +1145,9 @@ document.addEventListener("DOMContentLoaded", () => {
       console.warn("refresh 失敗，仍重新掃描", e);
     }
     categoriesLoaded = false;
+    picksLoaded = false;
     await loadScreener();
+    if (currentTab === "premarket") loadPicks();
     btn.disabled = false;
   });
 
