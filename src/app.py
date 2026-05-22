@@ -161,6 +161,15 @@ def ai_analysis(code: str, name: str = ""):
     return {"disclaimer": DISCLAIMER, **ai_advisor.analyze(result)}
 
 
+@app.get("/api/deep-analysis/{code}")
+def deep_analysis(code: str, name: str = ""):
+    """對指定個股執行華爾街分析師等級的深度投資分析（需設定 ANTHROPIC_API_KEY）。"""
+    result = _get_detail(code, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"查無代號 {code}")
+    return {"disclaimer": DISCLAIMER, **ai_advisor.deep_analyze(result)}
+
+
 @app.post("/api/refresh")
 def refresh():
     """清空快取，並在背景重新掃描。"""

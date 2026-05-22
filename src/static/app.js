@@ -335,11 +335,21 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>
 
       <div class="modal-section ai-section">
-        <h4>AI 多代理分析</h4>
+        <h4>AI 多代理分析（短線當沖觀點）</h4>
         <div id="ai-panel" data-code="${d.code}">
           <p class="ai-intro">由 Claude 扮演「看多研究員 ／ 看空研究員 ／ 交易員 ／ 風控」四個角色，
             綜合解讀本檔個股的技術面、基本面與消息面，給出短線操作判斷。</p>
           <button id="ai-run-btn" class="retry-btn">啟動 AI 分析</button>
+        </div>
+      </div>
+
+      <div class="modal-section ai-section">
+        <h4>深度投資分析（華爾街分析師觀點）</h4>
+        <div id="deep-panel" data-code="${d.code}">
+          <p class="ai-intro">由 Claude 以華爾街資深分析師角度，深度解讀商業模式、護城河、
+            財務體質、估值、成長潛力與多空情境，給出買入／持有／避免建議（長期基本面）。
+            分析較深入，約需 1–3 分鐘。</p>
+          <button id="deep-run-btn" class="retry-btn">啟動深度分析</button>
         </div>
       </div>
 
@@ -470,6 +480,8 @@ document.addEventListener("DOMContentLoaded", () => {
       renderIntraday(d.code);
       const aiBtn = document.getElementById("ai-run-btn");
       if (aiBtn) aiBtn.addEventListener("click", () => runAIAnalysis(d.code));
+      const deepBtn = document.getElementById("deep-run-btn");
+      if (deepBtn) deepBtn.addEventListener("click", () => runDeepAnalysis(d.code));
     } catch (err) {
       modalBody.innerHTML = `
         <div class="error-box">
@@ -721,6 +733,71 @@ document.addEventListener("DOMContentLoaded", () => {
       document
         .getElementById("ai-retry")
         .addEventListener("click", () => runAIAnalysis(code));
+    }
+  }
+
+  // ---- 深度投資分析 -------------------------------------------------------
+  function recClass(rec) {
+    if (rec === "買入") return "act-buy";
+    if (rec === "持有") return "act-hold";
+    return "act-avoid";
+  }
+
+  function deepResultHTML(d) {
+    const a = d.analysis;
+    const block = (title, text) =>
+      `<div class="ai-role"><h5>${title}</h5><p>${esc(text)}</p></div>`;
+    return `
+      <div class="ai-result">
+        <div class="badges" style="margin-bottom:10px">
+          <span class="action-badge ${recClass(a.recommendation)}">${esc(a.recommendation)}</span>
+          <span class="score-pill">護城河 <b>${a.moat_score}</b>／10</span>
+          <span class="score-pill">${esc(a.valuation_verdict)}</span>
+          <span class="score-pill">${esc(a.financial_trend)}</span>
+        </div>
+        <p class="ai-summary">${esc(a.summary)}</p>
+        ${block("商業模式與護城河", a.business_moat)}
+        ${block("產業趨勢", a.industry_trend)}
+        ${block("財務體質（近 5 年）", a.financial_health)}
+        ${block("估值分析", a.valuation)}
+        ${block("未來成長潛力", a.growth_potential)}
+        <div class="ai-role bull"><h5>多頭觀點</h5><p>${esc(a.bull_case)}</p></div>
+        <div class="ai-role bear"><h5>空頭觀點</h5><p>${esc(a.bear_case)}</p></div>
+        ${block("關鍵催化因素", a.key_catalysts)}
+        <div class="ai-role risk"><h5>主要風險</h5><p>${esc(a.key_risks)}</p></div>
+        ${block("短期展望（1 年內）", a.outlook_short)}
+        ${block("長期展望（5 年以上）", a.outlook_long)}
+        ${block("結論", a.conclusion)}
+        <p class="ai-model">分析引擎：${esc(d.model)}　·　財務數字為 AI 依公開資訊推估、
+          可能非最新，請以公司財報為準；非投資建議</p>
+      </div>`;
+  }
+
+  async function runDeepAnalysis(code) {
+    const panel = document.getElementById("deep-panel");
+    if (!panel) return;
+    panel.innerHTML =
+      '<p class="loading">深度分析中…<br><small>Claude 正在進行機構等級研究，約需 1–3 分鐘，請勿關閉頁面</small></p>';
+    try {
+      const d = await fetchJSON(
+        `/api/deep-analysis/${code}`,
+        {},
+        { attempts: 1, timeoutMs: 220000 }
+      );
+      if (!d.available) {
+        panel.innerHTML = `<div class="ai-unavailable"><p>${esc(d.message)}</p></div>`;
+        return;
+      }
+      panel.innerHTML = deepResultHTML(d);
+    } catch (err) {
+      panel.innerHTML = `
+        <div class="ai-unavailable">
+          <p>深度分析失敗：${esc(err.message)}</p>
+          <button id="deep-retry" class="retry-btn">重試</button>
+        </div>`;
+      document
+        .getElementById("deep-retry")
+        .addEventListener("click", () => runDeepAnalysis(code));
     }
   }
 

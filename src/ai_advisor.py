@@ -22,6 +22,7 @@ AI_MODEL = "claude-opus-4-7"
 
 # AI 結果快取：同一檔個股（demo 資料固定）不重複呼叫 LLM，避免重複計費
 _cache: dict[str, dict] = {}
+_deep_cache: dict[str, dict] = {}
 
 
 class AIAnalysis(BaseModel):
@@ -200,3 +201,113 @@ def analyze(stock: dict) -> dict:
 def clear_cache() -> None:
     """清空 AI 結果快取（資料重新載入時呼叫）。"""
     _cache.clear()
+    _deep_cache.clear()
+
+
+# ===========================================================================
+# 深度投資分析（華爾街分析師觀點，長期基本面）
+# ===========================================================================
+
+
+class DeepAnalysis(BaseModel):
+    """華爾街分析師等級的深度投資分析輸出。"""
+
+    summary: str               # 一段話總評
+    business_moat: str         # 商業模式與護城河
+    moat_score: int            # 護城河強度 1-10
+    industry_trend: str        # 產業趨勢
+    financial_health: str      # 財務體質（近 5 年）
+    financial_trend: Literal["體質轉強", "體質持平", "體質轉弱"]
+    valuation: str             # 估值分析
+    valuation_verdict: Literal["明顯低估", "合理偏低", "估值合理", "合理偏高", "明顯高估"]
+    growth_potential: str      # 未來 5–10 年成長潛力
+    bull_case: str             # 多頭論點
+    bear_case: str             # 空頭論點
+    key_catalysts: str         # 關鍵催化因素
+    key_risks: str             # 主要風險
+    outlook_short: str         # 短期展望（1 年內）
+    outlook_long: str          # 長期展望（5 年以上）
+    recommendation: Literal["買入", "持有", "避免"]
+    conclusion: str            # 中性結論與理由
+
+
+_DEEP_SYSTEM_PROMPT = """你是一位華爾街資深股票分析師，擅長對台股個股做機構等級的深度研究。
+你會收到一檔台股的基本資訊與目前的技術面摘要，請依你對該公司的了解，
+產出一份完整、專業的投資分析報告，涵蓋以下面向：
+
+- business_moat：商業模式與護城河（品牌影響力、網路效應、轉換成本、成本優勢、專利或獨家技術）
+- moat_score：護城河強度評分，1–10 的整數
+- industry_trend：產業趨勢
+- financial_health：以近 5 年角度評估營收成長、淨利趨勢、自由現金流、利潤率、負債水準、ROE
+- financial_trend：判斷財務體質是轉強、持平或轉弱
+- valuation：估值分析（本益比與同業比較、折現現金流 DCF 概念、產業平均估值）
+- valuation_verdict：估值結論（明顯低估／合理偏低／估值合理／合理偏高／明顯高估）
+- growth_potential：未來 5–10 年成長潛力（市場規模、產業成長率、擴張機會、新產品、AI／技術優勢）
+- bull_case／bear_case：多頭與空頭論點，雙方都要有依據
+- key_catalysts：關鍵催化因素
+- key_risks：主要風險
+- outlook_short／outlook_long：短期（1 年內）與長期（5 年以上）展望
+- recommendation：最終建議（買入／持有／避免）
+- conclusion：相對中性的結論與理由
+
+重要規範：
+- 一律使用繁體中文，專業但易懂，每段控制在 3~6 句。
+- 財務數字若引用自你的知識，請說明「依公開資訊推估」，並提醒實際數字以公司最新財報為準
+  （你的知識有時效限制，可能非最新）。
+- 這是長期投資角度的基本面分析，與短線當沖不同。
+- 所有產出僅供教學與研究參考，絕不構成投資建議。"""
+
+
+def _build_deep_prompt(stock: dict) -> str:
+    sc = stock.get("scores") or {}
+    weekly = stock.get("weekly") or {}
+    sector = stock.get("sector") or "（未分類）"
+    return f"""請以華爾街資深分析師的角度，深度分析以下台股個股：
+
+公司：{stock['name']}（{stock['code']}）　產業：{sector}
+目前股價：{stock['last_close']}　當日漲跌幅：{stock.get('change_pct', 0)}%
+技術面評分：{sc.get('technical', '—')}／100　週線中期趨勢：{weekly.get('trend', '—')}
+
+請依系統設定，產出完整的機構等級深度投資分析報告。"""
+
+
+def _call_claude_deep(stock: dict) -> dict:
+    import anthropic
+
+    client = anthropic.Anthropic()
+    response = client.messages.parse(
+        model=AI_MODEL,
+        max_tokens=12000,
+        thinking={"type": "adaptive"},
+        system=_DEEP_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": _build_deep_prompt(stock)}],
+        output_format=DeepAnalysis,
+    )
+    return {
+        "available": True,
+        "code": stock["code"],
+        "name": stock["name"],
+        "model": AI_MODEL,
+        "analysis": response.parsed_output.model_dump(),
+    }
+
+
+def deep_analyze(stock: dict) -> dict:
+    """對單一個股執行華爾街分析師等級的深度投資分析（結果會快取）。"""
+    code = stock["code"]
+    if code in _deep_cache:
+        return _deep_cache[code]
+
+    if not ai_enabled():
+        return {
+            "available": False,
+            "message": "尚未設定 ANTHROPIC_API_KEY，無法使用深度分析。",
+        }
+
+    try:
+        result = _call_claude_deep(stock)
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "message": f"深度分析呼叫失敗：{exc}"}
+
+    _deep_cache[code] = result
+    return result
