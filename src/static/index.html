@@ -18,6 +18,7 @@
       <button class="tab-btn active" data-tab="screener">當沖選股</button>
       <button class="tab-btn" data-tab="categories">個股分類</button>
       <button class="tab-btn" data-tab="premarket">盤前簡報</button>
+      <button class="tab-btn" data-tab="watchlist">口袋名單</button>
     </nav>
 
     <main>
@@ -73,6 +74,20 @@
             <button id="pm-run-btn" class="retry-btn">產生今日盤前簡報</button>
           </div>
           <div id="pm-result"></div>
+        </section>
+      </div>
+
+      <div id="tab-watchlist" class="hidden">
+        <section id="watchlist">
+          <h3>我的口袋名單</h3>
+          <p class="pm-intro">你關注的股票清單，儲存在這台裝置的瀏覽器。
+            在「當沖選股」頁點每列右側的 ☆ 即可加入。</p>
+          <div class="wl-add">
+            <input id="wl-input" type="text" placeholder="輸入代號加入（可多筆，逗號分隔）" />
+            <button id="wl-add-btn" class="retry-btn">加入</button>
+          </div>
+          <div id="wl-actions"></div>
+          <div id="watchlist-list" class="screener-list"></div>
         </section>
       </div>
     </main>

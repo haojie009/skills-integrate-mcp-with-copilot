@@ -66,6 +66,32 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
   font-weight: 700;
 }
 
+/* 口袋名單 */
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  min-width: 34px;
+  flex-shrink: 0;
+}
+.star-btn.on { color: var(--gold); }
+.wl-add { display: flex; gap: 8px; margin-bottom: 8px; }
+.wl-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+#wl-actions { margin-bottom: 10px; }
+
 /* 盤前簡報 */
 .pm-intro { font-size: 0.84rem; color: var(--muted); margin-bottom: 12px; }
 .pm-form {

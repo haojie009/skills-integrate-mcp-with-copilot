@@ -8,7 +8,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let screenerData = [];
   let currentSort = "score";
+  let currentTab = "screener";
   let categoriesLoaded = false;
+  let watchSet = new Set();
+
+  // ---- 口袋名單（存於瀏覽器 localStorage）--------------------------------
+  function getWatchlist() {
+    try {
+      return JSON.parse(localStorage.getItem("watchlist") || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+  function setWatchlist(list) {
+    localStorage.setItem("watchlist", JSON.stringify(list));
+  }
+  function toggleWatch(code) {
+    let list = getWatchlist();
+    if (list.includes(code)) list = list.filter((c) => c !== code);
+    else list.push(code);
+    setWatchlist(list);
+    return list.includes(code);
+  }
+  function refreshWatchSet() {
+    watchSet = new Set(getWatchlist());
+  }
 
   // ---- 工具函式 -----------------------------------------------------------
   const fmtPrice = (n) => Number(n).toLocaleString("zh-Hant", { minimumFractionDigits: 2 });
@@ -116,18 +140,71 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="sscore-num" style="color:${scoreColor(s.score)}">${Math.round(s.score)}</div>
           <div class="sscore-lbl">當沖分</div>
         </div>
+        <button class="star-btn ${watchSet.has(s.code) ? "on" : ""}" data-code="${s.code}"
+          >${watchSet.has(s.code) ? "★" : "☆"}</button>
       </div>`;
   }
 
+  function wireRows(container) {
+    container.querySelectorAll(".srow").forEach((row) => {
+      row.addEventListener("click", () => openDetail(row.dataset.code, row.dataset.name));
+    });
+    container.querySelectorAll(".star-btn").forEach((star) => {
+      star.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const added = toggleWatch(star.dataset.code);
+        star.textContent = added ? "★" : "☆";
+        star.classList.toggle("on", added);
+        if (currentTab === "watchlist") renderWatchlist();
+      });
+    });
+  }
+
   function renderScreener() {
-    const sorted = [...screenerData].sort(
-      (a, b) => (b[currentSort] ?? 0) - (a[currentSort] ?? 0)
-    );
+    refreshWatchSet();
+    const sorted = [...screenerData]
+      .sort((a, b) => (b[currentSort] ?? 0) - (a[currentSort] ?? 0))
+      .slice(0, 300);
     listEl.innerHTML = sorted.map((s, i) => screenerRowHTML(s, i + 1)).join("");
-    listEl.querySelectorAll(".srow").forEach((row) => {
-      row.addEventListener("click", () =>
-        openDetail(row.dataset.code, row.dataset.name)
-      );
+    wireRows(listEl);
+  }
+
+  function renderWatchlist() {
+    refreshWatchSet();
+    const listWrap = document.getElementById("watchlist-list");
+    const actionsEl = document.getElementById("wl-actions");
+    const codes = getWatchlist();
+    if (codes.length === 0) {
+      listWrap.innerHTML =
+        '<p class="loading">口袋名單是空的。<br><small>到「當沖選股」頁點每列右側的 ☆，或在上方輸入代號加入。</small></p>';
+      actionsEl.innerHTML = "";
+      return;
+    }
+    const byCode = {};
+    screenerData.forEach((s) => {
+      byCode[s.code] = s;
+    });
+    const found = codes.map((c) => byCode[c]).filter(Boolean);
+    const missing = codes.filter((c) => !byCode[c]);
+    listWrap.innerHTML =
+      found.map((s, i) => screenerRowHTML(s, i + 1)).join("") +
+      missing
+        .map(
+          (c) => `
+        <div class="srow" data-code="${c}" data-name="">
+          <span class="srank">–</span>
+          <div class="sinfo"><div class="sname">${c}
+            <span class="scode">${screenerData.length ? "查無即時資料" : "資料載入中…"}</span></div></div>
+          <button class="star-btn on" data-code="${c}">★</button>
+        </div>`
+        )
+        .join("");
+    wireRows(listWrap);
+    actionsEl.innerHTML =
+      '<button id="wl-to-premarket" class="retry-btn">用口袋名單做盤前簡報</button>';
+    document.getElementById("wl-to-premarket").addEventListener("click", () => {
+      document.getElementById("pm-holdings").value = codes.join(",");
+      document.querySelector('.tab-btn[data-tab="premarket"]').click();
     });
   }
 
@@ -152,14 +229,15 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     try {
       const data = await fetchJSON(
-        "/api/screener?limit=300",
+        "/api/screener?limit=2000",
         {},
         { onAttempt, timeoutMs: 60000, attempts: 5 }
       );
       disclaimerEl.textContent = "⚠️ " + data.disclaimer;
       dataSourceEl.textContent = "資料來源：" + data.data_source;
       screenerData = data.stocks || [];
-      listTitle.textContent = `當沖適合度排行（顯示 ${screenerData.length} 檔，掃描 ${data.total} 檔）`;
+      const shown = Math.min(screenerData.length, 300);
+      listTitle.textContent = `當沖適合度排行（顯示前 ${shown} 檔，掃描 ${data.total} 檔）`;
 
       const warnEl = document.getElementById("screener-warn");
       if ((data.data_source || "").includes("demo")) {
@@ -173,6 +251,7 @@ document.addEventListener("DOMContentLoaded", () => {
         warnEl.classList.add("hidden");
       }
       renderScreener();
+      if (currentTab === "watchlist") renderWatchlist();
     } catch (err) {
       renderError(
         `掃描失敗：${err.message}。免費主機可能仍在喚醒，請按下方按鈕重試。`
@@ -903,10 +982,13 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       const tab = btn.dataset.tab;
+      currentTab = tab;
       document.getElementById("tab-screener").classList.toggle("hidden", tab !== "screener");
       document.getElementById("tab-categories").classList.toggle("hidden", tab !== "categories");
       document.getElementById("tab-premarket").classList.toggle("hidden", tab !== "premarket");
+      document.getElementById("tab-watchlist").classList.toggle("hidden", tab !== "watchlist");
       if (tab === "categories" && !categoriesLoaded) loadCategories();
+      if (tab === "watchlist") renderWatchlist();
     });
   });
 
@@ -933,6 +1015,21 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("pm-run-btn").addEventListener("click", loadPremarket);
+
+  document.getElementById("wl-add-btn").addEventListener("click", () => {
+    const input = document.getElementById("wl-input");
+    const codes = input.value
+      .split(/[,，\s]+/)
+      .map((c) => c.trim())
+      .filter((c) => /^\d{4}$/.test(c));
+    const list = getWatchlist();
+    codes.forEach((c) => {
+      if (!list.includes(c)) list.push(c);
+    });
+    setWatchlist(list);
+    input.value = "";
+    renderWatchlist();
+  });
 
   document.getElementById("modal-close").addEventListener("click", closeModal);
   modal.addEventListener("click", (e) => {
