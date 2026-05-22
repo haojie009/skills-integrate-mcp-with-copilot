@@ -104,6 +104,7 @@ def health():
         "status": "ok",
         "commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:7],
         "mode": data_provider.DATA_MODE,
+        "finmind": bool(data_provider.FINMIND_TOKEN),
         "data_source": data_provider.data_source_label(),
         "screener_stocks": len(_screener_cache or []),
         "screener_loaded": _screener_cache is not None,

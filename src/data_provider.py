@@ -678,6 +678,123 @@ def _demo_screener_rows():
 
 
 # ---------------------------------------------------------------------------
+# FinMind 資料 API（雲端可正常存取證交所資料，需 FINMIND_TOKEN）
+# ---------------------------------------------------------------------------
+
+_FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+
+# 由 FinMind 取得的全市場三大法人對照表（個股明細共用）
+_inst_map: dict = {}
+
+
+def _finmind_get(dataset, **params):
+    """呼叫 FinMind data API，回傳 data 陣列；失敗拋出例外。"""
+    import requests
+
+    query = {"dataset": dataset, "token": FINMIND_TOKEN, **params}
+    resp = requests.get(_FINMIND_URL, params=query, headers=_HTTP_HEADERS, timeout=30)
+    resp.raise_for_status()
+    payload = resp.json()
+    if payload.get("status") != 200:
+        raise ValueError(f"FinMind {dataset} 回應：{payload.get('msg')}")
+    return payload.get("data") or []
+
+
+def _finmind_institutional(start_date):
+    """抓全市場三大法人買賣超，回傳 {代號: {外資/投信/自營/合計 張數}}。"""
+    data = _finmind_get("TaiwanStockInstitutionalInvestorsBuySell", start_date=start_date)
+    if not data:
+        return {}
+    latest = max((r.get("date") or "") for r in data)
+    agg = {}
+    for r in data:
+        if (r.get("date") or "") != latest:
+            continue
+        code = str(r.get("stock_id") or "")
+        if not code:
+            continue
+        name = str(r.get("name") or "")
+        net = (_safe_float(r.get("buy")) or 0.0) - (_safe_float(r.get("sell")) or 0.0)
+        slot = agg.setdefault(code, {"foreign": 0.0, "trust": 0.0, "dealer": 0.0})
+        if "投信" in name or "Trust" in name or "Investment" in name:
+            slot["trust"] += net
+        elif "外" in name or "Foreign" in name:
+            slot["foreign"] += net
+        elif "自營" in name or "Dealer" in name:
+            slot["dealer"] += net
+    result = {}
+    for code, slot in agg.items():
+        total = slot["foreign"] + slot["trust"] + slot["dealer"]
+        result[code] = {
+            "foreign_lots": round(slot["foreign"] / 1000),
+            "trust_lots": round(slot["trust"] / 1000),
+            "dealer_lots": round(slot["dealer"] / 1000),
+            "inst_lots": round(total / 1000),
+        }
+    return result
+
+
+def _load_finmind_screener():
+    """以 FinMind 取得全市場單日量價＋三大法人，組成選股清單。"""
+    global _inst_map
+    today = datetime.now(timezone.utc).date()
+    price_start = (today - timedelta(days=14)).isoformat()
+    inst_start = (today - timedelta(days=8)).isoformat()
+
+    names = {}
+    for r in _finmind_get("TaiwanStockInfo"):
+        sid = str(r.get("stock_id") or "")
+        if sid:
+            names[sid] = str(r.get("stock_name") or sid).strip() or sid
+
+    by_stock = {}
+    for r in _finmind_get("TaiwanStockPrice", start_date=price_start):
+        code = str(r.get("stock_id") or "")
+        if len(code) != 4 or not code.isdigit() or code.startswith("0"):
+            continue
+        by_stock.setdefault(code, []).append(r)
+
+    rows = []
+    for code, recs in by_stock.items():
+        recs.sort(key=lambda x: x.get("date") or "")
+        last = recs[-1]
+        close = _safe_float(last.get("close"))
+        if close is None or close <= 0:
+            continue
+        prior = recs[:-1]
+        vols = [_safe_float(x.get("Trading_Volume")) or 0.0 for x in prior]
+        avg_vol = sum(vols) / len(vols) if vols else (_safe_float(last.get("Trading_Volume")) or 0.0)
+        highs = [_safe_float(x.get("max")) or 0.0 for x in prior]
+        recent_high = max(highs) if highs else close
+        last_vol = _safe_float(last.get("Trading_Volume")) or 0.0
+        rows.append({
+            "code": code,
+            "name": names.get(code, code),
+            "open": _safe_float(last.get("open")),
+            "high": _safe_float(last.get("max")),
+            "low": _safe_float(last.get("min")),
+            "close": close,
+            "change": _safe_float(last.get("spread")) or 0.0,
+            "volume_shares": last_vol,
+            "turnover": _safe_float(last.get("Trading_money")) or 0.0,
+            "vol_ratio": round(last_vol / avg_vol, 2) if avg_vol else 1.0,
+            "breakout": close > recent_high,
+        })
+
+    try:
+        _inst_map = _finmind_institutional(inst_start)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[data_provider] FinMind 三大法人抓取失敗：{exc}")
+        _inst_map = {}
+    for row in rows:
+        inst = _inst_map.get(row["code"])
+        if inst:
+            row.update(inst)
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # 對外介面
 # ---------------------------------------------------------------------------
 
@@ -686,32 +803,38 @@ _last_live_error = None
 
 
 def load_screener():
-    """回傳精選個股（live）或示範股（demo）的單日量價列表。"""
+    """回傳全市場（FinMind／Yahoo）或示範股（demo）的單日量價＋法人列表。"""
     global _actual_source, _last_live_error
+
+    # 1) FinMind：有 token 時優先（雲端能取得證交所資料、含三大法人）
+    if FINMIND_TOKEN:
+        try:
+            rows = _load_finmind_screener()
+            if len(rows) < 50:
+                raise ValueError(f"僅取得 {len(rows)} 檔")
+            _last_live_error = None
+            _actual_source = "finmind"
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            _last_live_error = f"FinMind {type(exc).__name__}: {exc}"
+            print(f"[data_provider] FinMind 選股失敗，改試 Yahoo：{exc}")
+
+    # 2) Yahoo：精選清單（無 FinMind token 或 FinMind 失敗時）
     if DATA_MODE == "live":
-        rows = []
         try:
             rows = _load_yahoo_screener()
             if len(rows) < 10:
-                raise ValueError(f"Yahoo 僅取得 {len(rows)} 檔，視為抓取失敗")
-            _last_live_error = None
-        except Exception as exc:  # noqa: BLE001
-            _last_live_error = f"{type(exc).__name__}: {exc}"
-            print(f"[data_provider] Yahoo 選股抓取失敗，退回 demo：{exc}")
-            rows = []
-        if rows:
-            # 嘗試補上三大法人（雲端通常抓不到，失敗就略過）
-            t86 = {}
-            try:
-                t86 = _parse_t86(_fetch_t86())
-            except Exception as exc:  # noqa: BLE001
-                print(f"[data_provider] T86 法人資料未取得（雲端正常現象）：{exc}")
-            for row in rows:
-                inst = t86.get(row["code"])
-                if inst:
-                    row.update(inst)
-            _actual_source = "live"
+                raise ValueError(f"僅取得 {len(rows)} 檔")
+            if not FINMIND_TOKEN:
+                _last_live_error = None
+            _actual_source = "yahoo"
             return rows
+        except Exception as exc:  # noqa: BLE001
+            if not FINMIND_TOKEN:
+                _last_live_error = f"Yahoo {type(exc).__name__}: {exc}"
+            print(f"[data_provider] Yahoo 選股失敗，退回 demo：{exc}")
+
+    # 3) demo
     _actual_source = "demo"
     return _demo_screener_rows()
 
@@ -735,7 +858,7 @@ def load_one_stock(code, name=""):
                     "name": name,
                     "sector": sector,
                     "fundamentals": _one_stock_fundamentals(code),
-                    "institutional": _one_stock_institutional(code),
+                    "institutional": _inst_map.get(code) or _one_stock_institutional(code),
                     "news": [],
                     "history": history,
                 }
@@ -752,14 +875,16 @@ def load_one_stock(code, name=""):
 
 def reset_caches():
     """清空全市場基本面與法人快取（資料重新整理時呼叫）。"""
-    global _fund_cache, _fund_loaded, _t86_cache, _t86_loaded
+    global _fund_cache, _fund_loaded, _t86_cache, _t86_loaded, _inst_map
     _fund_cache = {}
     _fund_loaded = False
     _t86_cache = {}
     _t86_loaded = False
+    _inst_map = {}
 
 
 def data_source_label():
-    if _actual_source == "live":
-        return "即時行情 Yahoo Finance (live)"
-    return "內建示範資料 (demo)"
+    return {
+        "finmind": "即時行情 FinMind／證交所 (live)",
+        "yahoo": "即時行情 Yahoo Finance (live)",
+    }.get(_actual_source, "內建示範資料 (demo)")
