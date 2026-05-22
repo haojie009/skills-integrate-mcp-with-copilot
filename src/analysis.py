@@ -1041,7 +1041,172 @@ def global_bias(markets):
     }
 
 
-def _direction_for_pick(theme, change_pct, bias):
+def kline_signal(row):
+    """從近 5~6 根日 K + vol_ratio/breakout 判斷 K 線型態與方向。
+
+    回傳:
+      side (多/空/中)
+      strength (0~3)
+      votes (浮點分數,負空正多)
+      patterns (list[str], 偵測到的型態名稱)
+      text (型態字串,給 UI 顯示用)
+    """
+    bars = row.get("recent_bars") or []
+    if len(bars) < 3:
+        return {
+            "side": "中", "strength": 0, "votes": 0.0,
+            "patterns": [], "text": "近期 K 線不足",
+        }
+
+    last = bars[-1]
+    prev = bars[-2]
+    o, h, l, c = last["open"], last["high"], last["low"], last["close"]
+    if None in (o, h, l, c) or h - l <= 0:
+        return {
+            "side": "中", "strength": 0, "votes": 0.0,
+            "patterns": [], "text": "資料異常,無法判讀",
+        }
+    rng = h - l
+    body = abs(c - o)
+    upper = h - max(o, c)
+    lower = min(o, c) - l
+    bull = c >= o
+    prev_bull = (prev.get("close") or 0) >= (prev.get("open") or 0)
+
+    patterns = []
+    votes = 0.0
+    strength = 0
+
+    # 1) 突破前 N 日新高(已由 data_provider 算好)
+    if row.get("breakout"):
+        patterns.append("突破前 N 日高")
+        votes += 2.0
+        strength += 1
+
+    # 2) 連續紅/黑
+    n_bull = n_bear = 0
+    for b in reversed(bars):
+        bo, bc = b.get("open") or 0, b.get("close") or 0
+        if bc >= bo and n_bear == 0:
+            n_bull += 1
+        elif bc < bo and n_bull == 0:
+            n_bear += 1
+        else:
+            break
+    vols = [b.get("volume") or 0 for b in bars]
+    if n_bull >= 3:
+        if len(vols) >= 3 and vols[-1] >= vols[-2] >= vols[-3] * 0.95:
+            patterns.append(f"紅 {n_bull} 兵(量遞增)")
+            votes += 2.0
+            strength += 1
+        else:
+            patterns.append(f"連 {n_bull} 根紅")
+            votes += 1.0
+    elif n_bear >= 3:
+        patterns.append(f"黑 {n_bear} 鴉")
+        votes -= 2.0
+        strength += 1
+
+    # 3) 最後一根 K 線實體 / 影線型態
+    if body > rng * 0.65:
+        if bull:
+            patterns.append("長紅 K")
+            votes += 1.0
+        else:
+            patterns.append("長黑 K")
+            votes -= 1.0
+    elif lower > body * 2 and lower > upper * 1.2 and lower > rng * 0.5:
+        patterns.append("槌子線(低檔有撐)")
+        votes += 1.5
+        strength += 1
+    elif upper > body * 2 and upper > lower * 1.2 and upper > rng * 0.5:
+        patterns.append("流星線(高檔遇壓)")
+        votes -= 1.5
+        strength += 1
+    elif body < rng * 0.12:
+        patterns.append("十字星(留意變盤)")
+
+    # 4) 多/空頭吞噬
+    po = prev.get("open") or 0
+    pc = prev.get("close") or 0
+    if bull and not prev_bull and c >= po and o <= pc:
+        patterns.append("多頭吞噬")
+        votes += 2.0
+        strength += 1
+    elif not bull and prev_bull and o >= pc and c <= po:
+        patterns.append("空頭吞噬")
+        votes -= 2.0
+        strength += 1
+
+    # 5) 跳空缺口
+    ph = prev.get("high") or 0
+    pl = prev.get("low") or 0
+    if o > ph and ph > 0:
+        if bull:
+            patterns.append("跳空+紅 K(強勢)")
+            votes += 2.0
+            strength += 1
+        else:
+            patterns.append("跳空高開收黑(警訊)")
+            votes -= 1.0
+    elif h < pl and pl > 0:
+        if not bull:
+            patterns.append("跳空+黑 K(弱勢)")
+            votes -= 2.0
+        else:
+            patterns.append("跳空低開收紅(止跌)")
+            votes += 1.0
+
+    # 6) 收盤 vs MA5(若有 5 筆以上收盤)
+    closes = [b.get("close") or 0 for b in bars]
+    if len(closes) >= 5 and all(closes[-5:]):
+        ma5 = sum(closes[-5:]) / 5
+        if c > ma5 * 1.005:
+            patterns.append("站上 MA5")
+            votes += 0.5
+        elif c < ma5 * 0.995:
+            patterns.append("跌破 MA5")
+            votes -= 0.8
+
+    # 7) 量價背離 / 量價配合
+    vol_ratio = row.get("vol_ratio") or 1.0
+    if vol_ratio >= 2.0:
+        if bull:
+            patterns.append(f"紅 K 爆量 ({vol_ratio}x)")
+            votes += 0.8
+        else:
+            patterns.append(f"黑 K 爆量 ({vol_ratio}x,警訊)")
+            votes -= 1.0
+            strength += 1
+
+    # 8) 振幅收斂(近 4 根振幅變小,變盤前夕)
+    if len(bars) >= 4:
+        highs = [b.get("high") or 0 for b in bars[-4:]]
+        lows = [b.get("low") or 0 for b in bars[-4:]]
+        if min(lows) > 0 and max(highs) > 0:
+            range_now = highs[-1] - lows[-1]
+            range_prev = max(highs[:-1]) - min(lows[:-1])
+            if range_prev > 0 and range_now < range_prev * 0.5 and "十字星" not in patterns:
+                patterns.append("振幅收斂(待變盤)")
+
+    if votes >= 2:
+        side = "多"
+    elif votes <= -2:
+        side = "空"
+    else:
+        side = "中"
+    text = "、".join(patterns[:4]) if patterns else "型態中性"
+
+    return {
+        "side": side,
+        "strength": min(strength, 3),
+        "votes": round(votes, 1),
+        "patterns": patterns,
+        "text": text,
+    }
+
+
+def _direction_for_pick(theme, change_pct, bias, kline=None):
     """依個股族群 + 全球盤勢,決定該檔當沖該優先做多/做空還是觀望。"""
     group = _THEME_TO_GROUP.get(theme)
     group_b = (bias["group_bias"].get(group, 0.0) if group else 0.0)
@@ -1050,6 +1215,12 @@ def _direction_for_pick(theme, change_pct, bias):
     # 個股本身昨日強勢/弱勢也納入
     if change_pct is not None:
         adj += min(max(change_pct / 5.0, -1.0), 1.0)
+    # K 線型態方向投票(權重最大,因為是最即時的訊號)
+    if kline:
+        if kline["side"] == "多":
+            adj += 0.6 + 0.3 * kline["strength"]
+        elif kline["side"] == "空":
+            adj -= 0.6 + 0.3 * kline["strength"]
 
     if adj >= 1.5:
         return ("做多優先", "全球與族群盤勢同向偏多,可順勢做多")
@@ -1164,10 +1335,17 @@ def daytrade_picks(rows, top_n=8, markets=None):
         risk_pct = round((last_close - stop) / last_close * 100, 2)
         reward1_pct = round((target1 - last_close) / last_close * 100, 2)
 
+        kline = kline_signal(r)
         direction, direction_note = (
-            _direction_for_pick(r.get("theme"), r.get("change_pct"), bias)
+            _direction_for_pick(r.get("theme"), r.get("change_pct"), bias, kline)
             if bias else ("—", "")
         )
+        # 即使沒 bias,也至少用 K 線給單獨方向
+        if not bias:
+            if kline["side"] == "多":
+                direction, direction_note = "K 線偏多", "K 線型態偏多,可順勢進場"
+            elif kline["side"] == "空":
+                direction, direction_note = "K 線偏空", "K 線型態偏空,做多需謹慎"
 
         picks.append({
             "code": r["code"],
@@ -1185,6 +1363,8 @@ def daytrade_picks(rows, top_n=8, markets=None):
             "trust_lots": r.get("trust_lots"),
             "direction": direction,
             "direction_note": direction_note,
+            "kline": kline,
+            "recent_bars": r.get("recent_bars") or [],
             "reasons": _pick_reasons(r),
             "cautions": _pick_cautions(r),
             "open_plan": {

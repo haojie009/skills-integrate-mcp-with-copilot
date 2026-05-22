@@ -503,6 +503,38 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>`;
   }
 
+  // 迷你 K 棒圖(近 N 根日 K,純 HTML/CSS)
+  function miniKBarHTML(bars) {
+    if (!bars || !bars.length) return "";
+    const valid = bars.filter((b) => b && b.high && b.low && b.open && b.close);
+    if (!valid.length) return "";
+    const all = valid.flatMap((b) => [b.high, b.low]);
+    const max = Math.max(...all);
+    const min = Math.min(...all);
+    const range = max - min || 1;
+    const H = 50;
+    const cells = bars
+      .map((b) => {
+        if (!b || !b.open || !b.close || !b.high || !b.low) {
+          return '<div class="mb-cell"></div>';
+        }
+        const bull = b.close >= b.open;
+        const cls = bull ? "up" : "down";
+        const topY = H * (1 - (b.high - min) / range);
+        const botY = H * (1 - (b.low - min) / range);
+        const bodyTop = H * (1 - (Math.max(b.open, b.close) - min) / range);
+        const bodyBot = H * (1 - (Math.min(b.open, b.close) - min) / range);
+        const bodyH = Math.max(1, bodyBot - bodyTop);
+        const shadowH = Math.max(1, botY - topY);
+        return `<div class="mb-cell">
+          <div class="mb-shadow ${cls}" style="top:${topY.toFixed(1)}px;height:${shadowH.toFixed(1)}px"></div>
+          <div class="mb-body ${cls}" style="top:${bodyTop.toFixed(1)}px;height:${bodyH.toFixed(1)}px"></div>
+        </div>`;
+      })
+      .join("");
+    return `<div class="mini-kbar" style="height:${H}px">${cells}</div>`;
+  }
+
   // ---- 盤前精選當沖名單 -------------------------------------------------
   function pickCardHTML(p, rank) {
     const op = p.open_plan || {};
@@ -521,6 +553,26 @@ document.addEventListener("DOMContentLoaded", () => {
       ? `<div class="pick-dir ${dirBadgeCls}">
           <b>${esc(p.direction)}</b>
           ${p.direction_note ? `<span>${esc(p.direction_note)}</span>` : ""}
+        </div>`
+      : "";
+    const k = p.kline || {};
+    const kSideCls =
+      k.side === "多" ? "k-up" : k.side === "空" ? "k-down" : "k-mid";
+    const kPatTags = (k.patterns || [])
+      .map((t) => `<span class="k-tag">${esc(t)}</span>`)
+      .join("");
+    const klineBlock = k && k.text
+      ? `<div class="pick-kline">
+          <div class="pk-left">
+            <div class="pk-head">
+              <b>K 線</b>
+              <span class="pk-side ${kSideCls}">${esc(k.side || "中")}</span>
+              ${k.strength ? `<span class="pk-str">強度 ${k.strength}/3</span>` : ""}
+            </div>
+            <div class="pk-text">${esc(k.text)}</div>
+            <div class="pk-tags">${kPatTags}</div>
+          </div>
+          <div class="pk-right">${miniKBarHTML(p.recent_bars)}</div>
         </div>`
       : "";
     const reasonsHTML = (p.reasons || [])
@@ -551,6 +603,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         <div class="pick-tags">${tagsHTML}</div>
         ${dirBadge}
+        ${klineBlock}
         <div class="pick-plan">
           <div class="pp-row"><b>進場</b>${esc(op.trigger || "—")}</div>
           <div class="pp-grid">

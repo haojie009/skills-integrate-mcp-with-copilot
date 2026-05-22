@@ -537,7 +537,7 @@ def _fetch_yahoo_quote(code):
     url = _YAHOO_CHART.format(symbol=f"{code}.TW")
     resp = requests.get(
         url,
-        params={"range": "7d", "interval": "1d"},
+        params={"range": "1mo", "interval": "1d"},
         headers=_HTTP_HEADERS,
         timeout=8,
     )
@@ -549,6 +549,15 @@ def _fetch_yahoo_quote(code):
     prior = hist[:-1]  # 今日之前的數日，用來算量增與突破
     avg_vol = sum(b["volume"] for b in prior) / len(prior) if prior else last["volume"]
     recent_high = max(b["high"] for b in prior) if prior else last["high"]
+    # 近 6 根日 K（含今日）→ 供 K 線型態判斷
+    recent_bars = [
+        {
+            "date": b.get("date"),
+            "open": b["open"], "high": b["high"], "low": b["low"], "close": b["close"],
+            "volume": b["volume"],
+        }
+        for b in hist[-6:]
+    ]
     return {
         "open": last["open"],
         "high": last["high"],
@@ -559,6 +568,7 @@ def _fetch_yahoo_quote(code):
         "turnover": last["close"] * last["volume"] * 1000,
         "vol_ratio": round(last["volume"] / avg_vol, 2) if avg_vol else 1.0,
         "breakout": last["close"] > recent_high,
+        "recent_bars": recent_bars,
     }
 
 
@@ -718,6 +728,14 @@ def _demo_screener_rows():
             "turnover": last["close"] * last["volume"] * 1000,
             "vol_ratio": round(last["volume"] / avg_vol, 2) if avg_vol else 1.0,
             "breakout": last["close"] > recent_high,
+            "recent_bars": [
+                {
+                    "date": b.get("date"),
+                    "open": b["open"], "high": b["high"], "low": b["low"], "close": b["close"],
+                    "volume": b["volume"],
+                }
+                for b in history[-6:]
+            ],
             **_demo_institutional(profile["code"]),
         })
     return rows
@@ -814,6 +832,18 @@ def _load_finmind_screener():
         highs = [_safe_float(x.get("max")) or 0.0 for x in prior]
         recent_high = max(highs) if highs else close
         last_vol = _safe_float(last.get("Trading_Volume")) or 0.0
+        # 近 6 根日 K（含今日）→ 供 K 線型態判斷
+        recent_bars = [
+            {
+                "date": r.get("date"),
+                "open": _safe_float(r.get("open")),
+                "high": _safe_float(r.get("max")),
+                "low": _safe_float(r.get("min")),
+                "close": _safe_float(r.get("close")),
+                "volume": _safe_float(r.get("Trading_Volume")) or 0.0,
+            }
+            for r in recs[-6:]
+        ]
         rows.append({
             "code": code,
             "name": names.get(code, code),
@@ -826,6 +856,7 @@ def _load_finmind_screener():
             "turnover": _safe_float(last.get("Trading_money")) or 0.0,
             "vol_ratio": round(last_vol / avg_vol, 2) if avg_vol else 1.0,
             "breakout": close > recent_high,
+            "recent_bars": recent_bars,
         })
 
     try:
