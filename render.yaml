@@ -1,0 +1,29 @@
+# Render Blueprint —— 台股當沖／隔日沖選股助手
+#
+# 一鍵部署方式：
+#   1. 把此 repo 推上 GitHub（本檔已在 repo 內）。
+#   2. 登入 https://render.com → 點「New +」→「Blueprint」。
+#   3. 選擇此 repo，Render 會自動讀取本檔並建立 Web Service。
+#   4. 按下「Apply」，等待 build 完成即可取得對外網址。
+#
+# 文件：https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: tw-stock-trading-assistant
+    runtime: python
+    plan: free
+    region: singapore
+    branch: claude/taiwan-stock-trading-app-cv1gG
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --app-dir src --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # live＝抓真實行情（Yahoo Finance／證交所）；改成 demo 用內建示範資料
+      - key: STOCK_DATA_MODE
+        value: live
+      # AI 多代理分析所需的 Claude 金鑰；sync:false 代表值要在 Render
+      # 服務的 Environment 分頁手動填入，不會寫進此檔（避免外洩）
+      - key: ANTHROPIC_API_KEY
+        sync: false

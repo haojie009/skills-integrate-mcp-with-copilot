@@ -1,50 +1,154 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mergington High School Activities</title>
+    <title>台股當沖選股雷達</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header>
-      <h1>Mergington High School</h1>
-      <h2>Extracurricular Activities</h2>
+      <div class="header-top">
+        <h1>台股當沖選股雷達</h1>
+        <div class="account-bar">
+          <span id="account-status" class="account-status">未登入</span>
+          <button id="account-btn" class="account-btn">登入 / 註冊</button>
+        </div>
+      </div>
+      <p class="subtitle">盤前選股　|　掃描近 300 檔個股，挑出明日當沖標的與飆股</p>
     </header>
 
-    <main>
-      <section id="activities-container">
-        <h3>Available Activities</h3>
-        <div id="activities-list">
-          <!-- Activities will be loaded here -->
-          <p>Loading activities...</p>
-        </div>
-      </section>
+    <div id="disclaimer" class="disclaimer">載入中…</div>
 
-      <section id="signup-container">
-        <h3>Sign Up for an Activity</h3>
-        <form id="signup-form">
-          <div class="form-group">
-            <label for="email">Student Email:</label>
-            <input type="email" id="email" required placeholder="your-email@mergington.edu" />
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="screener">當沖選股</button>
+      <button class="tab-btn" data-tab="categories">個股分類</button>
+      <button class="tab-btn" data-tab="premarket">盤前簡報</button>
+      <button class="tab-btn" data-tab="watchlist">口袋名單</button>
+    </nav>
+
+    <main>
+      <div id="tab-screener">
+        <section class="controls">
+          <div class="sort-toggle">
+            <button class="sort-btn active" data-sort="score">當沖適合度</button>
+            <button class="sort-btn" data-sort="hot_score">飆股雷達</button>
+            <button class="sort-btn" data-sort="amplitude_pct">振幅</button>
+            <button class="sort-btn" data-sort="change_pct">漲幅</button>
+            <button class="sort-btn" data-sort="turnover_yi">成交金額</button>
           </div>
-          <div class="form-group">
-            <label for="activity">Select Activity:</label>
-            <select id="activity" required>
-              <option value="">-- Select an activity --</option>
-              <!-- Activity options will be loaded here -->
-            </select>
+          <div class="meta">
+            <span id="data-source"></span>
+            <button id="refresh-btn" title="重新掃描">↻ 更新</button>
           </div>
-          <button type="submit">Sign Up</button>
-        </form>
-        <div id="message" class="hidden"></div>
-      </section>
+        </section>
+
+        <section id="screener">
+          <h3 id="list-title">當沖適合度排行</h3>
+          <div id="screener-warn" class="warn-box hidden"></div>
+          <div id="list" class="screener-list">
+            <p class="loading">掃描全市場中…</p>
+          </div>
+        </section>
+      </div>
+
+      <div id="tab-categories" class="hidden">
+        <section id="categories">
+          <h3>成交量排行（當日成交張數）</h3>
+          <div id="volume-list" class="screener-list">
+            <p class="loading">載入中…</p>
+          </div>
+          <h3 style="margin-top:24px">熱門題材（依成分股平均漲跌幅）</h3>
+          <div id="theme-list">
+            <p class="loading">載入中…</p>
+          </div>
+        </section>
+      </div>
+
+      <div id="tab-premarket" class="hidden">
+        <section id="picks-section">
+          <h3>🤖 9:00 AI 操作首選</h3>
+          <p class="pm-intro">綜合 18 個維度(技術指標 KD/MACD/布林/RSI/DMI/OBV/MA、K 線型態、法人籌碼、
+            基本面、消息面、全球盤勢、族群偏向)後,選出今日最該做多 / 做空的個股,並把進場/停損/停利
+            直接標記在 K 線圖上。</p>
+          <div id="hero-pick" class="hero-pick-wrap">
+            <p class="loading">AI 綜合判讀中…</p>
+          </div>
+
+          <h3 style="margin-top:24px">🎯 盤前精選名單(8 檔)</h3>
+          <p class="pm-intro">每檔附綜合決策、進場觸發、停損停利、K 線型態與入選理由。</p>
+          <div id="picks-list" class="picks-list">
+            <p class="loading">載入中…</p>
+          </div>
+        </section>
+
+        <section id="premarket">
+          <h3>每日盤前簡報(AI 風控助理)</h3>
+          <p class="pm-intro">開盤前的情報整理、持股風險檢查與交易計畫。
+            AI 扮演盤前助理與風控,不提供買賣明牌。</p>
+          <div class="pm-form">
+            <label>我的持股（代號，逗號分隔）
+              <input id="pm-holdings" type="text" placeholder="例：2330,2317,2454" />
+            </label>
+            <label>觀察股（選填）
+              <input id="pm-watch" type="text" placeholder="例：3008,2603" />
+            </label>
+            <button id="pm-run-btn" class="retry-btn">產生今日盤前簡報</button>
+          </div>
+          <div id="pm-result"></div>
+        </section>
+      </div>
+
+      <div id="tab-watchlist" class="hidden">
+        <section id="watchlist">
+          <h3>我的口袋名單</h3>
+          <p class="pm-intro">你關注的股票清單，儲存在這台裝置的瀏覽器。
+            在「當沖選股」頁點每列右側的 ☆ 即可加入。</p>
+          <div class="wl-add">
+            <input id="wl-input" type="text" placeholder="輸入代號加入（可多筆，逗號分隔）" />
+            <button id="wl-add-btn" class="retry-btn">加入</button>
+          </div>
+          <div id="wl-actions"></div>
+          <div id="watchlist-list" class="screener-list"></div>
+        </section>
+      </div>
     </main>
 
+    <div id="modal" class="modal hidden">
+      <div class="modal-box">
+        <button id="modal-close" class="modal-close">✕</button>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+
+    <div id="auth-modal" class="modal hidden">
+      <div class="modal-box auth-modal-box">
+        <button id="auth-close" class="modal-close">✕</button>
+        <h3 id="auth-title">登入</h3>
+        <p class="auth-tip">登入後,口袋名單會同步到雲端,換手機/換瀏覽器也看得到。</p>
+        <div class="auth-form">
+          <label>Email
+            <input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <label>密碼
+            <input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 碼" />
+          </label>
+          <div id="auth-err" class="auth-err"></div>
+          <button id="auth-submit" class="retry-btn">登入</button>
+          <p class="auth-switch">
+            <a href="#" id="auth-switch-link">沒有帳號?註冊一個</a>
+          </p>
+        </div>
+      </div>
+    </div>
+
     <footer>
-      <p>&copy; 2023 Mergington High School</p>
+      <p>本工具僅供教學與研究，所有評分與買賣計畫均為量化規則自動產生，<strong>非投資建議</strong>。</p>
     </footer>
 
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-client.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
