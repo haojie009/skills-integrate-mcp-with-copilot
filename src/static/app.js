@@ -458,6 +458,298 @@ document.addEventListener("DOMContentLoaded", () => {
       <p style="font-size:0.76rem;color:var(--muted);margin-top:12px">⚠️ ${esc(d.disclaimer || "")}</p>`;
   }
 
+  // ---- 盤中即時進出場提醒(追蹤 hero 個股) ---------------------------
+  let heroAlertTimer = null;
+  let trackedHero = null;
+  let lastAlertStatus = null;
+  let nativeNotifAllowed = false;
+
+  function isMarketHours() {
+    const now = new Date();
+    // 用台北時間判斷 09:00-13:30 一般交易時段
+    const tw = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+    const day = tw.getDay();
+    if (day === 0 || day === 6) return false;
+    const minutes = tw.getHours() * 60 + tw.getMinutes();
+    return minutes >= 9 * 60 && minutes <= 13 * 60 + 35;
+  }
+
+  function tryRequestNotification() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+      nativeNotifAllowed = true;
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((p) => {
+        nativeNotifAllowed = p === "granted";
+      });
+    }
+  }
+
+  function pushNativeNotif(title, body) {
+    if (!nativeNotifAllowed) return;
+    try {
+      new Notification(title, { body, tag: "twstock-alert" });
+    } catch (_) {}
+  }
+
+  function startHeroTracking(hero, role) {
+    stopHeroTracking();
+    if (!hero || !hero.plan) return;
+    trackedHero = { ...hero, role };
+    lastAlertStatus = null;
+    pollHeroPrice();
+    // 收盤後不再 poll,省流量
+    heroAlertTimer = setInterval(pollHeroPrice, 30000);
+    tryRequestNotification();
+  }
+
+  function stopHeroTracking() {
+    if (heroAlertTimer) clearInterval(heroAlertTimer);
+    heroAlertTimer = null;
+    trackedHero = null;
+    lastAlertStatus = null;
+  }
+
+  async function pollHeroPrice() {
+    if (!trackedHero) return;
+    try {
+      const d = await fetchJSON(
+        `/api/intraday/${trackedHero.code}`,
+        {},
+        { attempts: 1, timeoutMs: 15000 }
+      );
+      if (d && d.last) updateAlertBanner(d.last, d.prev_close);
+    } catch (e) {
+      console.warn("盤中追蹤抓取失敗", e);
+      const banner = document.getElementById("hero-alert");
+      if (banner) {
+        banner.className = "hero-alert alert-offline";
+        banner.innerHTML = `<b>⚠️ 暫時無法取得盤中價</b><span>等下次重試…</span>`;
+      }
+    }
+  }
+
+  function updateAlertBanner(price, prevClose) {
+    const banner = document.getElementById("hero-alert");
+    if (!banner || !trackedHero) return;
+    const h = trackedHero;
+    const plan = h.plan || {};
+    const entry = plan.trigger_price || plan.entry_high;
+    const target1 = plan.target1 || plan.target;
+    const target2 = plan.target2;
+    const stop = plan.stop;
+    const isLong = h.role === "long";
+
+    let status = "⏳ 等待觸發";
+    let cls = "alert-wait";
+    let action = "";
+
+    if (isLong) {
+      // 做多:由低往高,跌破停損出場,達停利出場
+      if (stop && price <= stop) {
+        status = "⛔ 跌破停損,立即出場"; cls = "alert-stop";
+        action = `現價 ${price} ≤ 停損 ${stop}`;
+      } else if (target2 && price >= target2) {
+        status = "🎯 達停利 2,可分批/全出"; cls = "alert-target";
+        action = `現價 ${price} ≥ 停利 2 ${target2}`;
+      } else if (target1 && price >= target1) {
+        status = "🎯 達停利 1,先出一半"; cls = "alert-target";
+        action = `現價 ${price} ≥ 停利 1 ${target1}`;
+      } else if (entry && price >= entry) {
+        status = "✅ 已觸發進場價"; cls = "alert-entry";
+        action = `現價 ${price} ≥ 進場 ${entry},確認量續放即進`;
+      } else if (entry && entry - price <= entry * 0.005) {
+        status = "🚨 接近進場價(0.5% 內)"; cls = "alert-near";
+        action = `現價 ${price},進場 ${entry},差 ${(((entry - price) / entry) * 100).toFixed(2)}%`;
+      } else {
+        action = `現價 ${price},進場 ${entry || "—"} · 停損 ${stop || "—"}`;
+      }
+    } else {
+      // 做空:由高往低,反向邏輯
+      if (stop && price >= stop) {
+        status = "⛔ 突破空單停損,立即回補"; cls = "alert-stop";
+        action = `現價 ${price} ≥ 停損 ${stop}`;
+      } else if (target2 && price <= target2) {
+        status = "🎯 達空單停利 2,回補"; cls = "alert-target";
+        action = `現價 ${price} ≤ 停利 2 ${target2}`;
+      } else if (target1 && price <= target1) {
+        status = "🎯 達空單停利 1,回補一半"; cls = "alert-target";
+        action = `現價 ${price} ≤ 停利 1 ${target1}`;
+      } else if (entry && price <= entry) {
+        status = "✅ 已觸發空單進場"; cls = "alert-entry";
+        action = `現價 ${price} ≤ 進場 ${entry},確認下跌量能即放空`;
+      } else if (entry && price - entry <= entry * 0.005) {
+        status = "🚨 接近空單進場"; cls = "alert-near";
+        action = `現價 ${price},空單進場 ${entry}`;
+      } else {
+        action = `現價 ${price},放空 ${entry || "—"} · 停損 ${stop || "—"}`;
+      }
+    }
+
+    const changePct = prevClose ? ((price - prevClose) / prevClose * 100).toFixed(2) : null;
+    const chgHTML = changePct !== null
+      ? `<span class="alert-chg ${parseFloat(changePct) >= 0 ? "up" : "down"}">${parseFloat(changePct) >= 0 ? "+" : ""}${changePct}%</span>`
+      : "";
+
+    banner.className = `hero-alert ${cls}`;
+    banner.innerHTML = `
+      <div class="ha-main">
+        <b>${status}</b>
+        <span class="ha-price">${fmtPrice(price)} ${chgHTML}</span>
+      </div>
+      <div class="ha-sub">${esc(action)}</div>
+      <div class="ha-tick">最後更新 ${new Date().toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>`;
+
+    // 狀態變化時推系統通知
+    if (lastAlertStatus !== status && lastAlertStatus !== null) {
+      if (cls === "alert-entry" || cls === "alert-target" || cls === "alert-stop") {
+        pushNativeNotif(`${h.name} ${status}`, action);
+      }
+    }
+    lastAlertStatus = status;
+  }
+
+  // ---- 9:00 AI 操作首選(含 K 線圖 + 進出場價格線) -------------------
+  let heroChart = null;
+  function destroyHeroChart() {
+    if (heroChart) {
+      try { heroChart.remove(); } catch (_) {}
+      heroChart = null;
+    }
+  }
+
+  function renderHeroChart(elId, hero) {
+    const el = document.getElementById(elId);
+    if (!el || !hero || !hero.history || !hero.history.length) return;
+    const hist = hero.history.slice(-60);
+    const s = hero.series || {};
+    const start = hero.history.length - hist.length;
+    const slc = (arr) => (arr || []).slice(start);
+    const toLine = (arr) =>
+      arr
+        .map((v, i) => (v == null ? null : { time: hist[i].date, value: v }))
+        .filter(Boolean);
+
+    const chart = LightweightCharts.createChart(el, {
+      layout: { background: { color: "#182433" }, textColor: "#93a4b8", fontSize: 11 },
+      grid: { vertLines: { color: "#22324a" }, horzLines: { color: "#22324a" } },
+      rightPriceScale: { borderColor: "#2c3e54" },
+      timeScale: { borderColor: "#2c3e54", timeVisible: false },
+      width: el.clientWidth,
+      height: 280,
+    });
+    const candle = chart.addCandlestickSeries({
+      upColor: "#e23b3b", downColor: "#1aa251",
+      borderVisible: false,
+      wickUpColor: "#e23b3b", wickDownColor: "#1aa251",
+    });
+    candle.setData(
+      hist.map((h) => ({ time: h.date, open: h.open, high: h.high, low: h.low, close: h.close }))
+    );
+    [["ma5", "#f4b740"], ["ma10", "#5fa8e0"], ["ma20", "#c98bff"]].forEach(([k, c]) => {
+      if (s[k]) {
+        chart.addLineSeries({ color: c, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+          .setData(toLine(slc(s[k])));
+      }
+    });
+
+    // 進場 / 停損 / 停利價格線
+    const plan = hero.plan || {};
+    const addLine = (price, color, title) => {
+      if (!price) return;
+      candle.createPriceLine({
+        price,
+        color,
+        lineWidth: 2,
+        lineStyle: 2, // dashed
+        axisLabelVisible: true,
+        title,
+      });
+    };
+    addLine(plan.trigger_price || plan.entry_high, "#f4b740", `進場 ${plan.trigger_price || plan.entry_high}`);
+    addLine(plan.target1 || plan.target, "#e23b3b", `停利1 ${plan.target1 || plan.target}`);
+    if (plan.target2 && plan.target2 !== (plan.target1 || plan.target)) {
+      addLine(plan.target2, "#ff8a8a", `停利2 ${plan.target2}`);
+    }
+    addLine(plan.stop, "#1aa251", `停損 ${plan.stop}`);
+
+    chart.timeScale().fitContent();
+    heroChart = chart;
+    window.addEventListener("resize", () => {
+      try { chart.applyOptions({ width: el.clientWidth }); } catch (_) {}
+    });
+  }
+
+  function heroCardHTML(hero, role) {
+    if (!hero) return "";
+    const isLong = role === "long";
+    const dirCls = isLong ? "hero-long" : "hero-short";
+    const roleLabel = isLong ? "做多首選" : "做空首選";
+    const stars = "★".repeat(hero.conviction || 0) + "☆".repeat(5 - (hero.conviction || 0));
+    const dirCol = (hero.change_pct || 0) >= 0 ? "up" : "down";
+    const plan = hero.plan || {};
+    const k = hero.kline || {};
+    const factorsPos = (hero.factors_pos || [])
+      .slice(0, 8)
+      .map((f) => `<li>${esc(f)}</li>`)
+      .join("");
+    const factorsNeg = (hero.factors_neg || [])
+      .slice(0, 8)
+      .map((f) => `<li>${esc(f)}</li>`)
+      .join("");
+    const risks = (hero.risks || [])
+      .slice(0, 5)
+      .map((r) => `<li>${esc(r)}</li>`)
+      .join("");
+    const chartId = `hero-chart-${role}`;
+    return `
+      <div class="hero-card ${dirCls}" data-code="${hero.code}" data-name="${esc(hero.name)}">
+        <div class="hero-head">
+          <div class="hero-role">${roleLabel}</div>
+          <div class="hero-title">
+            <div class="hero-name">${esc(hero.name)} <span class="hero-code">${hero.code}</span>
+              ${hero.theme ? `<span class="hero-theme">${esc(hero.theme)}</span>` : ""}</div>
+            <div class="hero-meta">
+              <span class="${dirCol}">${fmtPrice(hero.last_close || 0)}</span>
+              <span class="${dirCol}">${fmtPct(hero.change_pct || 0)}</span>
+            </div>
+          </div>
+          <div class="hero-decision">
+            <div class="hero-dec-label">${esc(hero.decision || "—")}</div>
+            <div class="hero-stars">${stars}</div>
+            <div class="hero-score">分數 ${hero.score >= 0 ? "+" : ""}${hero.score}</div>
+          </div>
+        </div>
+        <div class="hero-action">${esc(hero.action || "")}</div>
+        <div id="hero-alert" class="hero-alert alert-wait">
+          <div class="ha-main"><b>⏳ 開盤前等待</b><span class="ha-price">—</span></div>
+          <div class="ha-sub">盤中將即時追蹤現價,觸發進場/停損/停利會在此提示並推送通知</div>
+        </div>
+        <div class="hero-chart-wrap">
+          <div id="${chartId}" class="hero-chart"></div>
+          <div class="hero-legend">
+            <span class="lg-entry">━ 進場 ${plan.trigger_price || plan.entry_high || "—"}</span>
+            <span class="lg-tgt">━ 停利1 ${plan.target1 || plan.target || "—"}</span>
+            ${plan.target2 ? `<span class="lg-tgt2">━ 停利2 ${plan.target2}</span>` : ""}
+            <span class="lg-stop">━ 停損 ${plan.stop || "—"}</span>
+            <span class="lg-ma">━ MA5 ━ MA10 ━ MA20</span>
+          </div>
+        </div>
+        <div class="hero-factors">
+          <div class="hf-col">
+            <b>✅ 看${isLong ? "多" : "空"}因子 (${(hero.factors_pos || []).length})</b>
+            <ul>${isLong ? factorsPos : factorsNeg}</ul>
+          </div>
+          <div class="hf-col">
+            <b>❌ 反向因子</b>
+            <ul>${isLong ? factorsNeg : factorsPos}</ul>
+          </div>
+          ${risks ? `<div class="hf-col hf-warn"><b>⚠️ 風險警示</b><ul>${risks}</ul></div>` : ""}
+        </div>
+        ${k.text ? `<div class="hero-kline"><b>K 線</b> ${esc(k.text)}</div>` : ""}
+      </div>`;
+  }
+
   // ---- 全球盤勢卡片 -------------------------------------------------------
   function globalBiasHTML(bias, markets) {
     if (!bias) return "";
@@ -555,6 +847,26 @@ document.addEventListener("DOMContentLoaded", () => {
           ${p.direction_note ? `<span>${esc(p.direction_note)}</span>` : ""}
         </div>`
       : "";
+
+    // 綜合決策(由 comprehensive_judgment 帶入)
+    const j = p.judgment;
+    let judgmentBlock = "";
+    if (j) {
+      const decCls = j.decision.includes("空") ? "j-short"
+        : j.decision.includes("觀望") || j.decision.includes("中性") ? "j-neu"
+        : "j-long";
+      const stars = "★".repeat(j.conviction || 0) + "☆".repeat(5 - (j.conviction || 0));
+      judgmentBlock = `<div class="pick-judg ${decCls}">
+        <div class="pj-head">
+          <span class="pj-label">AI 決策</span>
+          <b>${esc(j.decision)}</b>
+          <span class="pj-stars">${stars}</span>
+          <span class="pj-score">${j.score >= 0 ? "+" : ""}${j.score}</span>
+        </div>
+        <div class="pj-action">${esc(j.action || "")}</div>
+        <div class="pj-counts">看多 ${j.pos_count} 項 · 看空 ${j.neg_count} 項 · 風險 ${(j.risks || []).length} 項</div>
+      </div>`;
+    }
     const k = p.kline || {};
     const kSideCls =
       k.side === "多" ? "k-up" : k.side === "空" ? "k-down" : "k-mid";
@@ -602,6 +914,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         </div>
         <div class="pick-tags">${tagsHTML}</div>
+        ${judgmentBlock}
         ${dirBadge}
         ${klineBlock}
         <div class="pick-plan">
@@ -623,30 +936,74 @@ document.addEventListener("DOMContentLoaded", () => {
   let picksLoaded = false;
   async function loadPicks() {
     const wrap = document.getElementById("picks-list");
+    const heroWrap = document.getElementById("hero-pick");
     if (!wrap) return;
-    wrap.innerHTML = '<p class="loading">挑選盤前精選名單中…</p>';
+    destroyHeroChart();
+    if (heroWrap) heroWrap.innerHTML = '<p class="loading">AI 綜合判讀中…</p>';
+    wrap.innerHTML = '<p class="loading">挑選盤前精選名單中…(綜合 18 維度,需數十秒)</p>';
     try {
-      const d = await fetchJSON("/api/picks?top_n=8", {}, { attempts: 3, timeoutMs: 60000 });
+      const d = await fetchJSON("/api/picks?top_n=8", {}, { attempts: 3, timeoutMs: 90000 });
       const picks = d.picks || [];
-      if (!picks.length) {
-        wrap.innerHTML =
-          globalBiasHTML(d.global_bias, d.markets) +
-          '<p class="loading">目前沒有符合嚴格條件的當沖標的(可能成交清淡或市場動能不足)。</p>';
-        picksLoaded = true;
-        return;
-      }
+
+      // 頂部:全球盤勢
       const biasHTML = globalBiasHTML(d.global_bias, d.markets);
-      wrap.innerHTML = biasHTML + picks.map((p, i) => pickCardHTML(p, i + 1)).join("");
-      wrap.querySelectorAll(".pick-card").forEach((card) => {
-        card.addEventListener("click", (e) => {
-          if (e.target.closest("a,button")) return;
-          openDetail(card.dataset.code, card.dataset.name);
+
+      // 頂部:9:00 AI 首選(優先做多;若做多信心低且有強做空,呈現做空首選)
+      const longH = d.hero_long;
+      const shortH = d.hero_short;
+      let heroHTML = "";
+      if (longH && longH.conviction >= (shortH ? shortH.conviction : 0)) {
+        heroHTML = heroCardHTML(longH, "long");
+      } else if (shortH) {
+        heroHTML = heroCardHTML(shortH, "short");
+      } else if (longH) {
+        heroHTML = heroCardHTML(longH, "long");
+      } else {
+        heroHTML = '<p class="loading">今日各檔訊號分歧,無強信心首選(全球盤勢請見下方)</p>';
+      }
+      if (heroWrap) heroWrap.innerHTML = heroHTML;
+
+      // 主清單
+      if (!picks.length) {
+        wrap.innerHTML = biasHTML +
+          '<p class="loading">目前沒有符合嚴格條件的當沖標的(可能成交清淡或市場動能不足)。</p>';
+      } else {
+        wrap.innerHTML = biasHTML + picks.map((p, i) => pickCardHTML(p, i + 1)).join("");
+        wrap.querySelectorAll(".pick-card").forEach((card) => {
+          card.addEventListener("click", (e) => {
+            if (e.target.closest("a,button")) return;
+            openDetail(card.dataset.code, card.dataset.name);
+          });
         });
+      }
+
+      // hero K 線圖 (延後渲染,等 DOM 進來)
+      requestAnimationFrame(() => {
+        const heroPicked = (longH && longH.conviction >= (shortH ? shortH.conviction : 0)) ? longH : (shortH || longH);
+        if (heroPicked) {
+          const role = (heroPicked === longH) ? "long" : "short";
+          renderHeroChart(`hero-chart-${role}`, heroPicked);
+          // 啟動盤中即時進出場追蹤
+          startHeroTracking(heroPicked, role);
+        } else {
+          stopHeroTracking();
+        }
       });
+
+      // hero 卡點擊開詳細
+      const heroEl = heroWrap && heroWrap.querySelector(".hero-card");
+      if (heroEl) {
+        heroEl.addEventListener("click", (e) => {
+          if (e.target.closest("a,button,.hero-chart,.hero-chart-wrap")) return;
+          openDetail(heroEl.dataset.code, heroEl.dataset.name);
+        });
+      }
+
       picksLoaded = true;
     } catch (err) {
       wrap.innerHTML = `<div class="ai-unavailable"><p>挑選失敗:${esc(err.message)}</p>
         <button class="retry-btn" id="picks-retry">重試</button></div>`;
+      if (heroWrap) heroWrap.innerHTML = "";
       document.getElementById("picks-retry").addEventListener("click", loadPicks);
     }
   }
@@ -1240,6 +1597,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (tab === "categories" && !categoriesLoaded) loadCategories();
       if (tab === "premarket" && !picksLoaded) loadPicks();
       if (tab === "watchlist") renderWatchlist();
+      // 離開盤前簡報頁時暫停盤中追蹤,省流量
+      if (tab !== "premarket") stopHeroTracking();
     });
   });
 
@@ -1262,6 +1621,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     categoriesLoaded = false;
     picksLoaded = false;
+    stopHeroTracking();
     await loadScreener();
     if (currentTab === "premarket") loadPicks();
     btn.disabled = false;

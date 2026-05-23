@@ -661,6 +661,187 @@ h3 { margin-bottom: 12px; font-size: 1.1rem; }
 .ticker .tv.down { color: var(--down); font-weight: 600; }
 .ticker .tv.muted { color: var(--muted); }
 
+/* 9:00 AI 操作首選 卡片 */
+.hero-pick-wrap { margin-bottom: 20px; }
+.hero-card {
+  background: linear-gradient(160deg, #1d2c44, #182433);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+}
+.hero-card.hero-long { border-top: 4px solid var(--up); }
+.hero-card.hero-short { border-top: 4px solid var(--down); }
+.hero-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.hero-role {
+  font-size: 0.78rem;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.hero-card.hero-long .hero-role { background: rgba(226,59,59,0.2); color: var(--up); }
+.hero-card.hero-short .hero-role { background: rgba(26,162,81,0.2); color: var(--down); }
+.hero-title { flex: 1; min-width: 0; }
+.hero-name { font-size: 1.18rem; font-weight: 700; }
+.hero-code { color: var(--muted); font-size: 0.85rem; margin-left: 6px; }
+.hero-theme {
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  background: rgba(154,211,255,0.13);
+  color: #9ad3ff;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+.hero-meta { display: flex; gap: 10px; font-size: 0.92rem; margin-top: 3px; }
+.hero-meta .up { color: var(--up); font-weight: 600; }
+.hero-meta .down { color: var(--down); font-weight: 600; }
+.hero-decision {
+  text-align: right;
+  min-width: 110px;
+}
+.hero-dec-label {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.hero-card.hero-long .hero-dec-label { color: var(--up); }
+.hero-card.hero-short .hero-dec-label { color: var(--down); }
+.hero-stars { color: var(--gold); font-size: 0.95rem; letter-spacing: 1px; }
+.hero-score { color: var(--muted); font-size: 0.78rem; }
+.hero-action {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: rgba(244,183,64,0.1);
+  border-left: 3px solid var(--gold);
+  font-size: 0.92rem;
+  border-radius: 4px;
+}
+/* 盤中即時進出場提醒 banner */
+.hero-alert {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+}
+.hero-alert .ha-main {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  font-size: 1.02rem;
+}
+.hero-alert .ha-main b { font-weight: 700; }
+.hero-alert .ha-price { font-size: 1.1rem; font-weight: 700; }
+.hero-alert .alert-chg { font-size: 0.85rem; margin-left: 6px; }
+.hero-alert .alert-chg.up { color: var(--up); }
+.hero-alert .alert-chg.down { color: var(--down); }
+.hero-alert .ha-sub { margin-top: 4px; font-size: 0.85rem; color: var(--muted); }
+.hero-alert .ha-tick { margin-top: 4px; font-size: 0.72rem; color: var(--muted); opacity: 0.7; }
+.hero-alert.alert-wait { background: rgba(255,255,255,0.04); border-color: var(--line); }
+.hero-alert.alert-wait b { color: var(--muted); }
+.hero-alert.alert-near {
+  background: rgba(244,183,64,0.15);
+  border-color: var(--gold);
+  animation: alertPulse 1.5s ease-in-out infinite;
+}
+.hero-alert.alert-near b { color: var(--gold); }
+.hero-alert.alert-entry {
+  background: rgba(226,59,59,0.18);
+  border-color: var(--up);
+  animation: alertPulse 1s ease-in-out infinite;
+}
+.hero-alert.alert-entry b { color: var(--up); font-size: 1.08rem; }
+.hero-alert.alert-target {
+  background: rgba(255,138,138,0.2);
+  border: 2px solid var(--up);
+}
+.hero-alert.alert-target b { color: var(--up); font-size: 1.1rem; }
+.hero-alert.alert-stop {
+  background: rgba(26,162,81,0.22);
+  border: 2px solid var(--down);
+  animation: alertPulse 0.7s ease-in-out infinite;
+}
+.hero-alert.alert-stop b { color: var(--down); font-size: 1.1rem; }
+.hero-alert.alert-offline { background: rgba(244,183,64,0.08); }
+.hero-alert.alert-offline b { color: var(--gold); }
+@keyframes alertPulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50% { box-shadow: 0 0 0 4px rgba(255,255,255,0.08); opacity: 0.92; }
+}
+
+.hero-chart-wrap {
+  margin-top: 12px;
+  padding: 10px;
+  background: rgba(0,0,0,0.18);
+  border-radius: 8px;
+}
+.hero-chart { width: 100%; height: 280px; }
+.hero-legend {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.lg-entry { color: var(--gold); }
+.lg-tgt { color: var(--up); }
+.lg-tgt2 { color: #ff8a8a; }
+.lg-stop { color: var(--down); }
+.lg-ma { color: #c98bff; }
+
+.hero-factors {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.hf-col {
+  padding: 10px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.hf-col b { display: block; margin-bottom: 6px; color: var(--text); }
+.hf-col ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.hf-col ul li { margin-bottom: 3px; line-height: 1.5; }
+.hf-col.hf-warn b { color: #ffb86b; }
+
+.hero-kline {
+  margin-top: 10px;
+  font-size: 0.88rem;
+  color: var(--muted);
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+}
+.hero-kline b { color: var(--text); margin-right: 6px; }
+
+/* 精選卡上的綜合決策 mini 區塊 */
+.pick-judg {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: rgba(255,255,255,0.04);
+  border-left: 3px solid var(--muted);
+}
+.pick-judg.j-long { border-left-color: var(--up); }
+.pick-judg.j-short { border-left-color: var(--down); }
+.pick-judg.j-neu { border-left-color: var(--gold); }
+.pj-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pj-label { color: var(--muted); font-size: 0.78rem; }
+.pj-head b { font-weight: 700; }
+.pick-judg.j-long .pj-head b { color: var(--up); }
+.pick-judg.j-short .pj-head b { color: var(--down); }
+.pick-judg.j-neu .pj-head b { color: var(--gold); }
+.pj-stars { color: var(--gold); font-size: 0.82rem; }
+.pj-score { color: var(--muted); font-size: 0.78rem; margin-left: auto; }
+.pj-action { margin-top: 4px; font-size: 0.84rem; color: var(--text); }
+.pj-counts { margin-top: 2px; font-size: 0.76rem; color: var(--muted); }
+
 /* K 線型態區塊 + 迷你 K 棒 */
 .pick-kline {
   margin-top: 8px;

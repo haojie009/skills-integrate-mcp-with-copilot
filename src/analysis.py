@@ -1206,6 +1206,350 @@ def kline_signal(row):
     }
 
 
+def comprehensive_judgment(detail, kline=None, bias=None):
+    """以專業操盤桌視角綜合所有面向,給出今日做多/做空/觀望的決策。
+
+    考量:週線趨勢、均線排列、KD、MACD、RSI、布林帶、BIAS、Williams %R、CCI、
+    DMI/ADX、OBV、K 線型態、法人籌碼、基本面、消息面、族群與全球盤勢。
+    每個面向給出 +/- 投票,匯總後裁定。
+    """
+    if not detail:
+        return None
+    ind = detail.get("indicators") or {}
+    last = detail.get("last_close") or 0
+    theme = detail.get("theme") or ""
+
+    score = 0.0
+    pos = []   # 看多因子
+    neg = []   # 看空因子
+    risks = []
+
+    # 1) 週線趨勢
+    wk = (detail.get("weekly") or {}).get("trend")
+    if wk == "多頭":
+        score += 1.0
+        pos.append("週線多頭排列")
+    elif wk == "空頭":
+        score -= 1.5
+        neg.append("週線空頭排列,做多逆勢")
+
+    # 2) 均線排列
+    ma5, ma10, ma20, ma60 = ind.get("ma5"), ind.get("ma10"), ind.get("ma20"), ind.get("ma60")
+    if ma5 and ma10 and ma20:
+        if last > ma5 > ma10 > ma20:
+            score += 1.8
+            pos.append("價>MA5>MA10>MA20 短期完整多頭排列")
+        elif last < ma5 < ma10 < ma20:
+            score -= 1.8
+            neg.append("價<MA5<MA10<MA20 完整空頭排列")
+        elif ma5 > ma10 and last > ma5:
+            score += 0.7
+            pos.append("價站上 MA5 且 MA5>MA10")
+        elif ma5 < ma10 and last < ma5:
+            score -= 0.7
+            neg.append("價跌破 MA5 且 MA5<MA10")
+    if ma20 and ma60:
+        if ma20 > ma60 * 1.005:
+            score += 0.4
+            pos.append("MA20>MA60 中期多頭")
+        elif ma20 < ma60 * 0.995:
+            score -= 0.4
+            neg.append("MA20<MA60 中期空頭")
+
+    # 3) 黃金/死亡交叉(靠 MA5/MA10 距離判斷接近度)
+    if ma5 and ma10:
+        diff = (ma5 - ma10) / ma10 * 100
+        if 0 < diff < 0.5:
+            score += 0.6
+            pos.append("MA5 剛站上 MA10,黃金交叉成形")
+        elif -0.5 < diff < 0:
+            score -= 0.6
+            neg.append("MA5 剛跌破 MA10,死亡交叉成形")
+
+    # 4) RSI
+    rsi14 = ind.get("rsi14")
+    if rsi14 is not None:
+        if 55 <= rsi14 <= 70:
+            score += 1.0
+            pos.append(f"RSI {rsi14:.0f} 健康多方")
+        elif rsi14 > 80:
+            score -= 0.5
+            risks.append(f"RSI {rsi14:.0f} 過熱,追多有回檔風險")
+        elif 40 <= rsi14 < 50:
+            score -= 0.6
+            neg.append(f"RSI {rsi14:.0f} 偏弱")
+        elif rsi14 < 30:
+            score += 0.4
+            pos.append(f"RSI {rsi14:.0f} 超賣,有反彈機會")
+            risks.append("超賣反彈非反轉,只做反彈不做反轉")
+
+    # 5) KD
+    kd_v = ind.get("kd") or {}
+    k_v, d_v = kd_v.get("k"), kd_v.get("d")
+    if k_v is not None and d_v is not None:
+        if k_v > d_v and 20 < k_v < 80:
+            score += 1.0
+            pos.append(f"KD 黃金交叉 (K{k_v:.0f}/D{d_v:.0f})")
+        elif k_v < d_v and 20 < k_v < 80:
+            score -= 1.0
+            neg.append(f"KD 死亡交叉 (K{k_v:.0f}/D{d_v:.0f})")
+        if k_v >= 85 and d_v >= 80:
+            risks.append("KD 雙線高檔,留意鈍化後拉回")
+        elif k_v <= 15 and d_v <= 20:
+            score += 0.3
+            pos.append("KD 雙線低檔超賣")
+
+    # 6) MACD
+    macd_v = ind.get("macd") or {}
+    hist = macd_v.get("hist")
+    hist_prev = macd_v.get("hist_prev")
+    dif = macd_v.get("dif")
+    if hist is not None and hist_prev is not None:
+        if hist > 0 and hist > hist_prev:
+            score += 1.2
+            pos.append("MACD 紅柱放大,動能加速")
+        elif hist > 0 and hist < hist_prev:
+            risks.append("MACD 紅柱縮短,動能轉弱要小心")
+        elif hist < 0 and hist < hist_prev:
+            score -= 1.2
+            neg.append("MACD 綠柱放大,空方加速")
+        elif hist < 0 and hist > hist_prev:
+            score -= 0.3
+            neg.append("MACD 綠柱縮短,跌勢趨緩")
+    if dif is not None and hist is not None:
+        if dif > 0 and hist > 0:
+            score += 0.4
+            pos.append("MACD 多頭區運作")
+        elif dif < 0 and hist < 0:
+            score -= 0.4
+            neg.append("MACD 空頭區運作")
+
+    # 7) 布林帶
+    boll = ind.get("bollinger") or {}
+    upper, middle, lower = boll.get("upper"), boll.get("middle"), boll.get("lower")
+    if upper and lower and middle:
+        rng = upper - lower
+        if rng > 0:
+            pos_in_band = (last - lower) / rng
+            if pos_in_band > 1.0:
+                risks.append("價已突破布林上軌,留意拉回")
+                score += 0.2
+            elif pos_in_band > 0.85:
+                score += 0.5
+                pos.append("貼近布林上軌,趨勢強")
+            elif pos_in_band < 0.15:
+                score -= 0.4
+                neg.append("貼近布林下軌,弱勢")
+            elif last > middle:
+                score += 0.3
+                pos.append("價在布林中軌上,偏多")
+            else:
+                score -= 0.3
+
+    # 8) 乖離率 BIAS
+    bias10 = ind.get("bias10")
+    if bias10 is not None:
+        if bias10 > 8:
+            risks.append(f"乖離 +{bias10:.1f}% 過大,短線拉回機率高")
+            score -= 0.5
+        elif bias10 > 3:
+            score += 0.3
+            pos.append(f"乖離 +{bias10:.1f}%,動能延續")
+        elif bias10 < -8:
+            score += 0.5
+            pos.append(f"負乖離 {bias10:.1f}%,反彈機會")
+        elif bias10 < -3:
+            score -= 0.3
+            neg.append(f"負乖離 {bias10:.1f}%,弱勢")
+
+    # 9) Williams %R
+    wr = ind.get("williams_r")
+    if wr is not None:
+        if wr > -20:
+            risks.append(f"Williams %R {wr:.0f} 超買區")
+        elif wr < -80:
+            score += 0.3
+            pos.append(f"Williams %R {wr:.0f} 超賣")
+
+    # 10) CCI
+    cci_v = ind.get("cci20")
+    if cci_v is not None:
+        if cci_v > 200:
+            risks.append(f"CCI {cci_v:.0f} 漲勢過度延伸")
+        elif cci_v > 100:
+            score += 0.6
+            pos.append(f"CCI {cci_v:.0f} 順勢多方")
+        elif cci_v < -100:
+            score -= 0.6
+            neg.append(f"CCI {cci_v:.0f} 空方動能強")
+
+    # 11) DMI / ADX
+    dmi_v = ind.get("dmi") or {}
+    plus_di, minus_di, adx = dmi_v.get("plus_di"), dmi_v.get("minus_di"), dmi_v.get("adx")
+    if plus_di is not None and minus_di is not None and adx is not None:
+        if adx >= 25 and plus_di > minus_di:
+            score += 1.0
+            pos.append(f"ADX {adx:.0f} 趨勢明確,+DI 領先多方")
+        elif adx >= 25 and minus_di > plus_di:
+            score -= 1.0
+            neg.append(f"ADX {adx:.0f} 趨勢明確,-DI 領先空方")
+        elif adx < 20:
+            risks.append(f"ADX {adx:.0f} 趨勢不明,當沖難度高")
+
+    # 12) OBV 量價趨勢
+    obv_v = ind.get("obv") or {}
+    obv_trend = obv_v.get("trend")
+    chg = ind.get("change_pct") or 0
+    if obv_trend == "up":
+        if chg > 0:
+            score += 0.7
+            pos.append("OBV 上升 + 價漲,量價齊揚")
+        else:
+            score += 0.3
+            pos.append("OBV 上升,主力默默承接")
+    elif obv_trend == "down":
+        if chg > 0:
+            score -= 0.8
+            neg.append("OBV 下降但價漲,量價背離(出貨警訊)")
+        else:
+            score -= 0.6
+            neg.append("OBV 下降,賣壓未歇")
+
+    # 13) K 線型態(由 kline_signal 帶入)
+    if kline:
+        if kline.get("side") == "多":
+            kv = 1.0 + 0.3 * (kline.get("strength") or 0)
+            score += kv
+            pos.append(f"K 線偏多:{kline.get('text','')}")
+        elif kline.get("side") == "空":
+            kv = 1.0 + 0.3 * (kline.get("strength") or 0)
+            score -= kv
+            neg.append(f"K 線偏空:{kline.get('text','')}")
+
+    # 14) 法人籌碼
+    inst = detail.get("institutional") or {}
+    inst_lots = inst.get("inst_lots")
+    trust = inst.get("trust_lots") or 0
+    if inst_lots is not None:
+        if inst_lots >= 5000:
+            score += 1.5
+            pos.append(f"三大法人合計買超 {inst_lots} 張(大買)")
+        elif inst_lots >= 1000:
+            score += 0.8
+            pos.append(f"三大法人買超 {inst_lots} 張")
+        elif inst_lots <= -5000:
+            score -= 1.5
+            neg.append(f"三大法人合計賣超 {abs(inst_lots)} 張(大賣)")
+        elif inst_lots <= -1000:
+            score -= 0.8
+            neg.append(f"三大法人賣超 {abs(inst_lots)} 張")
+    if trust >= 1000:
+        score += 0.5
+        pos.append(f"投信買超 {trust} 張,主力鎖籌碼")
+    elif trust <= -1000:
+        score -= 0.5
+        neg.append(f"投信賣超 {abs(trust)} 張")
+
+    # 15) 基本面
+    fund_score = (detail.get("scores") or {}).get("fundamental")
+    if fund_score is not None:
+        if fund_score >= 70:
+            score += 0.6
+            pos.append(f"基本面分 {fund_score:.0f} 強勁")
+        elif fund_score <= 40:
+            score -= 0.5
+            neg.append(f"基本面分 {fund_score:.0f} 偏弱")
+
+    # 16) 消息面
+    news_score = (detail.get("scores") or {}).get("news")
+    if news_score is not None:
+        if news_score >= 70:
+            score += 1.0
+            pos.append(f"消息面分 {news_score:.0f} 利多明顯")
+        elif news_score >= 60:
+            score += 0.3
+            pos.append(f"消息面分 {news_score:.0f} 偏多")
+        elif news_score <= 35:
+            score -= 1.0
+            neg.append(f"消息面分 {news_score:.0f} 利空")
+
+    # 17) 全球盤勢族群偏向
+    if bias:
+        group = _THEME_TO_GROUP.get(theme)
+        group_b = (bias.get("group_bias") or {}).get(group, 0.0) if group else 0.0
+        if group_b >= 1.0:
+            score += group_b * 0.6
+            pos.append(f"族群隔夜偏多 (+{group_b:.1f}),全球順風")
+        elif group_b <= -1.0:
+            score += group_b * 0.6
+            neg.append(f"族群隔夜偏空 ({group_b:.1f}),全球逆風")
+        overall = bias.get("overall_score", 0.0)
+        if overall >= 1.0:
+            score += overall * 0.3
+            pos.append(f"全球風險偏好升溫 (+{overall:.1f})")
+        elif overall <= -1.0:
+            score += overall * 0.3
+            neg.append(f"全球避險氣氛濃 ({overall:.1f})")
+
+    # 18) 支撐 / 壓力位置
+    sr = (detail.get("levels") or {}).get("support_resistance") or {}
+    resistance = sr.get("resistance")
+    support = sr.get("support")
+    if resistance and last >= resistance * 0.99:
+        risks.append(f"逼近 20 日壓力 {resistance:.1f},留意賣壓")
+    elif support and last <= support * 1.01:
+        score += 0.3
+        pos.append(f"靠近 20 日支撐 {support:.1f},跌深有撐")
+
+    # ---- 裁定決策 ----
+    if score >= 6:
+        decision = "強烈做多"
+        conviction = 5
+        action_text = "高信心做多,可在計畫進場價放大部位"
+    elif score >= 3.5:
+        decision = "做多"
+        conviction = 4
+        action_text = "順勢做多,守住停損紀律"
+    elif score >= 1.5:
+        decision = "偏多可進"
+        conviction = 3
+        action_text = "確認開盤量能且站上觸發價再進,部位減半"
+    elif score >= -1.5:
+        decision = "中性觀望"
+        conviction = 2
+        action_text = "訊號分歧,無明顯方向,以紀律觀望為主"
+    elif score >= -3.5:
+        decision = "偏空 / 不做多"
+        conviction = 3
+        action_text = "做多風險高,不追多;可考慮反彈做空"
+    elif score >= -6:
+        decision = "做空"
+        conviction = 4
+        action_text = "趨勢偏空,可在反彈高點順勢做空,守好停損"
+    else:
+        decision = "強烈做空"
+        conviction = 5
+        action_text = "高信心做空,持有空單可放大,留意反彈出場節奏"
+
+    # 信心扣分:若多空因子互相抵銷,即使分高也降信心
+    confidence_pen = abs(len(pos) - len(neg)) / max(len(pos) + len(neg), 1)
+    if confidence_pen < 0.3 and conviction > 2:
+        conviction -= 1
+        risks.append("多空因子接近,信心降一級")
+
+    return {
+        "decision": decision,
+        "conviction": conviction,
+        "score": round(score, 2),
+        "action": action_text,
+        "factors_pos": pos,
+        "factors_neg": neg,
+        "risks": risks,
+        "pos_count": len(pos),
+        "neg_count": len(neg),
+    }
+
+
 def _direction_for_pick(theme, change_pct, bias, kline=None):
     """依個股族群 + 全球盤勢,決定該檔當沖該優先做多/做空還是觀望。"""
     group = _THEME_TO_GROUP.get(theme)

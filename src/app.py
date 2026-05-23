@@ -20,6 +20,7 @@
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -144,22 +145,82 @@ def screener(limit: int = 200):
     }
 
 
+def _enrich_pick_with_judgment(pick, bias):
+    """為單一精選股抓 detail,跑綜合決策,把判斷寫回 pick。"""
+    detail = _get_detail(pick["code"], pick.get("name", ""))
+    if detail is None:
+        pick["judgment"] = None
+        return pick
+    # detail 沒帶 theme,從 pick 補上以利族群偏向加權
+    detail["theme"] = pick.get("theme")
+    pick["judgment"] = analysis.comprehensive_judgment(detail, pick.get("kline"), bias)
+    return pick
+
+
 @app.get("/api/picks")
 def picks(top_n: int = 8):
-    """盤前精選當沖名單:結合全球盤勢與昨日量價,挑出最值得當沖的前 N 檔。
-
-    每檔含進場/停損/停利計畫,並依族群套用全球隔夜變化(費半、ADR、油、債息...)
-    給出今日該優先做多/中性/保守/暫緩做多的方向。
+    """盤前精選當沖名單:結合全球盤勢、技術指標(KD/MACD/布林/RSI/DMI/OBV/MA)、
+    K 線型態、法人籌碼、基本面、消息面、族群偏向,給出每檔該做多/做空/觀望的決策。
+    並標出今日 AI 首選操作標的 (hero),含完整歷史 K 與計畫供圖上標記進場價。
     """
     rows = _get_screener()
     markets = _get_markets()
     bias = analysis.global_bias(markets)
+    picks = analysis.daytrade_picks(rows, top_n=top_n, markets=markets)
+
+    # 平行對每檔跑完整綜合決策(每檔 1 次 detail 抓取,使用 _detail_cache 加速)
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(picks)))) as pool:
+        picks = list(pool.map(lambda p: _enrich_pick_with_judgment(p, bias), picks))
+
+    # 選出今日 AI 首選:綜合分數最高、且 conviction 至少 3
+    longs = [p for p in picks if p.get("judgment") and "多" in p["judgment"]["decision"]]
+    shorts = [p for p in picks if p.get("judgment") and "空" in p["judgment"]["decision"]]
+    hero_long = max(longs, key=lambda p: p["judgment"]["score"], default=None)
+    hero_short = min(shorts, key=lambda p: p["judgment"]["score"], default=None)
+
+    # 為 hero 附上完整歷史與計畫,供前端圖上標記進場/停損/停利
+    def hero_payload(p):
+        if not p:
+            return None
+        detail = _get_detail(p["code"], p.get("name", ""))
+        if detail is None:
+            return None
+        plan = (detail.get("plans") or {}).get("day") or {}
+        return {
+            "code": p["code"],
+            "name": p["name"],
+            "decision": p["judgment"]["decision"],
+            "conviction": p["judgment"]["conviction"],
+            "score": p["judgment"]["score"],
+            "action": p["judgment"]["action"],
+            "factors_pos": p["judgment"]["factors_pos"],
+            "factors_neg": p["judgment"]["factors_neg"],
+            "risks": p["judgment"]["risks"],
+            "last_close": detail.get("last_close"),
+            "change_pct": detail.get("change_pct"),
+            "kline": p.get("kline"),
+            "theme": p.get("theme"),
+            "history": detail.get("history") or [],
+            "series": detail.get("series") or {},
+            "plan": {
+                "entry_low": plan.get("entry_low"),
+                "entry_high": plan.get("entry_high"),
+                "target": plan.get("target"),
+                "stop": plan.get("stop"),
+                "trigger_price": (p.get("open_plan") or {}).get("trigger_price"),
+                "target1": (p.get("open_plan") or {}).get("target1"),
+                "target2": (p.get("open_plan") or {}).get("target2"),
+            },
+        }
+
     return {
         "data_source": data_provider.data_source_label(),
         "disclaimer": DISCLAIMER,
         "markets": markets,
         "global_bias": bias,
-        "picks": analysis.daytrade_picks(rows, top_n=top_n, markets=markets),
+        "picks": picks,
+        "hero_long": hero_payload(hero_long),
+        "hero_short": hero_payload(hero_short),
     }
 
 
